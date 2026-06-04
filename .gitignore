@@ -1,0 +1,54 @@
+# ==========================================
+# ADAPT-Rehab / MEMOTION Git Ignore Config
+# ==========================================
+
+# 1. Ignore everything at root by default
+/*
+
+# 2. Whitelist allowed root files
+!/.gitignore
+!/main_v2.py
+!/requirements.txt
+
+# 3. Whitelist allowed root directories
+!/assets/
+!/core/
+!/data/
+!/models/
+!/modules/
+!/scripts/
+!/utils/
+
+# 4. Ignore rules inside Whitelisted Directories
+
+# Assets: ignore all video files
+assets/**/*.mp4
+assets/**/*.avi
+assets/**/*.mkv
+assets/**/*.mov
+assets/**/*.flv
+assets/**/*.webm
+
+# Data: ignore all files but keep the directories
+data/**/*
+!data/**/
+!data/**/.gitkeep
+
+# Models: ignore all heavy model files (.task, etc.) but keep the directory
+models/**/*
+!models/**/
+!models/**/.gitkeep
+
+# 5. Standard Python, IDE, and System Ignores (recursive)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.ipynb_checkpoints/
+**/.DS_Store
+**/Thumbs.db
+**/*.log
+**/med_venv/
+**/venv/
+**/.vscode/
+**/.idea/
