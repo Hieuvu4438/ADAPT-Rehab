@@ -50,6 +50,7 @@ class Pose3DResult:
     model_name: str = ""
     is_valid: bool = False
     error_message: str = ""
+    metadata: Dict = field(default_factory=dict)
 
     @property
     def num_joints(self) -> int:
