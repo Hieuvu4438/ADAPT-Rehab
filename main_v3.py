@@ -8,16 +8,9 @@ Architecture:
     Input → Perception (3D Pose + Face) → Analysis (Kinematics + Scoring)
     → Intelligence (LLM + Voice) → Output (Visual + Audio)
 
-Key Improvements from v2:
-    - Direct 3D pose estimation (MeTRAbs/HybrIK) instead of MediaPipe
-    - Deep learning pain/emotion detection
-    - LLM-based exercise coaching (API, not self-hosted)
-    - Quaternion-based joint angles
-    - SPARC smoothness metric
-    - Temporal compensation detection
-
 Usage:
-    python main_v3.py --source webcam --ref-video exercise.mp4
+    python main_v3.py --source webcam
+    python main_v3.py --source data/yoga_datasets/Yoga_Vid_Collected/Abhay_Bhujangasana.mp4
     python main_v3.py --mode demo
 
 Author: ADAPT-Rehab Team
@@ -29,49 +22,30 @@ import sys
 import os
 import time
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import numpy as np
+import cv2
 
+# Core modules
+from core.pose3d.base import create_estimator, PoseEstimator3D, Pose3DResult
+from core.kinematics_quaternion import QuaternionKinematics
+from core.smoothness import SmoothnessAnalyzer
+
+# Functional modules
+from modules.perception.face_analyzer import FaceAnalyzer, FaceAnalysisResult
+from modules.compensation import CompensationDetector
+from modules.fatigue import FatigueAnalyzer, FatigueLevel
+from modules.scoring_v2 import EnhancedScorer, RepScoreV2
+
+# Intelligence (optional)
 try:
-    import cv2
-except ImportError:
-    print("OpenCV required. Install: pip install opencv-python")
-    sys.exit(1)
-
-# Perception layer
-from perception.pose3d.base import create_estimator, PoseEstimator3D, Pose3DResult
-from perception.face.face_detector import FaceDetector
-from perception.face.au_detector import ActionUnitDetector
-from perception.face.emotion_classifier import EmotionClassifier
-
-# Analysis layer
-from analysis.kinematics_v2 import QuaternionKinematics
-from analysis.smoothness import SmoothnessAnalyzer
-from analysis.compensation import CompensationDetector
-from analysis.fatigue import FatigueAnalyzer
-from analysis.scoring_v2 import EnhancedScorer
-
-# Intelligence layer (optional - requires API keys)
-try:
-    from intelligence.llm.client import LLMClient
-    from intelligence.voice.tts import TextToSpeech
-    from intelligence.coach.rehab_coach import RehabCoach
+    from modules.intelligence.llm.client import LLMClient
+    from modules.intelligence.llm.safety import SafetyGuardrails
+    from modules.intelligence.voice.tts import TextToSpeech
+    from modules.intelligence.coach.rehab_coach import RehabCoach
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
-
-# Legacy modules (still used)
-from core.synchronizer import (
-    MotionSyncController, MotionPhase, SyncStatus,
-    create_arm_raise_exercise, create_elbow_flex_exercise,
-)
-from modules.calibration import SafeMaxCalibrator, CalibrationState, UserProfile
-from modules.video_engine import SyncedVideoPlayer
-from utils.logger import SessionLogger
-from utils.visualization import (
-    put_vietnamese_text, draw_skeleton, draw_panel,
-    draw_progress_bar, draw_phase_indicator, COLORS,
-)
 
 
 class ADAPTRehabV3:
@@ -86,15 +60,12 @@ class ADAPTRehabV3:
     """
 
     def __init__(self, args):
-        """Initialize application with command-line arguments."""
         self.args = args
         self.running = False
 
         # Perception
         self.pose_estimator: Optional[PoseEstimator3D] = None
-        self.face_detector: Optional[FaceDetector] = None
-        self.au_detector: Optional[ActionUnitDetector] = None
-        self.emotion_classifier: Optional[EmotionClassifier] = None
+        self.face_analyzer: Optional[FaceAnalyzer] = None
 
         # Analysis
         self.quaternion_kinematics = QuaternionKinematics()
@@ -104,19 +75,15 @@ class ADAPTRehabV3:
         self.scorer = EnhancedScorer()
 
         # Intelligence
-        self.llm_client: Optional[LLMClient] = None
-        self.tts: Optional[TextToSpeech] = None
         self.coach: Optional[RehabCoach] = None
 
-        # Legacy
-        self.calibrator = SafeMaxCalibrator()
-        self.logger = SessionLogger()
-        self.sync_controller: Optional[MotionSyncController] = None
-
         # State
-        self.user_profile: Optional[UserProfile] = None
-        self.current_phase = "detection"
         self.frame_count = 0
+        self.angles_history: List[Dict[str, float]] = []
+        self.timestamps: List[float] = []
+        self.pose_history: List[np.ndarray] = []
+        self.rep_count = 0
+        self.session_start_time = 0.0
 
     def initialize(self) -> bool:
         """Initialize all components."""
@@ -124,227 +91,294 @@ class ADAPTRehabV3:
         print("ADAPT-Rehab v3.0 - Multimodal AI Rehabilitation")
         print("=" * 60)
 
-        # 1. Initialize 3D Pose Estimator
-        print("\n[1/5] Initializing 3D Pose Estimator...")
-        pose_backend = self.args.pose_backend  # "metrab", "hybrik", "mediapipe_fallback"
-        self.pose_estimator = create_estimator(pose_backend)
-        if not self.pose_estimator.initialize(model_path=self.args.pose_model):
-            print(f"  ⚠ Failed to initialize {pose_backend}, falling back to MediaPipe")
+        # 1. Pose Estimator
+        print("\n[1/3] Initializing Pose Estimator...")
+        backend = self.args.pose_backend
+        self.pose_estimator = create_estimator(backend)
+        if not self.pose_estimator.initialize():
+            print(f"  ⚠ {backend} failed, falling back to mediapipe_fallback")
             self.pose_estimator = create_estimator("mediapipe_fallback")
             self.pose_estimator.initialize()
+        print(f"  ✓ Pose: {self.pose_estimator.model_name}")
 
-        # 2. Initialize Face Analysis
-        print("[2/5] Initializing Face Analysis...")
-        self.face_detector = FaceDetector()
-        self.face_detector.initialize()
-
-        if self.args.enable_au:
-            self.au_detector = ActionUnitDetector()
-            self.au_detector.initialize()
-
-        if self.args.enable_emotion:
-            self.emotion_classifier = EmotionClassifier()
-            self.emotion_classifier.initialize(model_path=self.args.emotion_model)
-
-        # 3. Initialize Intelligence Layer
-        print("[3/5] Initializing Intelligence Layer...")
-        if LLM_AVAILABLE and self.args.llm_api_key:
-            self.llm_client = LLMClient(
-                provider=self.args.llm_provider,
-                api_key=self.args.llm_api_key,
-            )
-            self.llm_client.initialize()
-
-            self.tts = TextToSpeech(voice=self.args.tts_voice)
-            self.tts.initialize()
-
-            self.coach = RehabCoach(
-                llm_client=self.llm_client,
-                tts=self.tts,
-            )
-            print("  ✓ LLM coaching enabled")
+        # 2. Face Analyzer
+        print("[2/3] Initializing Face Analyzer...")
+        self.face_analyzer = FaceAnalyzer()
+        if self.face_analyzer.initialize():
+            print("  ✓ Face: MediaPipe Face Mesh")
         else:
-            print("  ⚠ LLM coaching disabled (no API key)")
+            print("  ⚠ Face detection unavailable (model not found)")
+            self.face_analyzer = None
 
-        # 4. Initialize Calibration
-        print("[4/5] Initializing Calibration...")
-        if self.args.user_profile:
-            self.user_profile = self.calibrator.load_profile(self.args.user_profile)
-            if self.user_profile:
-                print(f"  ✓ Loaded profile: {self.user_profile.user_id}")
+        # 3. Intelligence (optional)
+        print("[3/3] Initializing Intelligence Layer...")
+        if LLM_AVAILABLE and self.args.llm_api_key:
+            try:
+                llm = LLMClient(provider=self.args.llm_provider, api_key=self.args.llm_api_key)
+                llm.initialize()
+                safety = SafetyGuardrails()
+                self.coach = RehabCoach(llm_client=llm, safety=safety)
+                print("  ✓ LLM coaching enabled")
+            except Exception as e:
+                print(f"  ⚠ LLM unavailable: {e}")
+        else:
+            print("  ⚠ LLM disabled (no API key)")
 
-        # 5. Initialize Logger
-        print("[5/5] Initializing Logger...")
-        self.logger.start_session("v3_session")
+        # Init scorer
+        self.scorer.start_session("v3_session")
 
-        print("\n✓ All components initialized successfully!")
-        print(f"  Pose Backend: {self.pose_estimator.model_name}")
-        print(f"  LLM: {'Enabled' if self.llm_client else 'Disabled'}")
+        print("\n✓ All components initialized")
+        print(f"  Pose: {self.pose_estimator.model_name}")
+        print(f"  Face: {'Enabled' if self.face_analyzer else 'Disabled'}")
+        print(f"  LLM: {'Enabled' if self.coach else 'Disabled'}")
         print("=" * 60)
-
         return True
 
     def run(self):
         """Main application loop."""
-        # Open video source
-        if self.args.source == "webcam":
+        source = self.args.source
+        if source == "webcam":
             cap = cv2.VideoCapture(0)
         else:
-            cap = cv2.VideoCapture(self.args.source)
+            cap = cv2.VideoCapture(source)
 
         if not cap.isOpened():
-            print("Error: Cannot open video source")
+            print(f"Error: Cannot open {source}")
             return
 
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        print(f"\nVideo: {w}x{h} @ {fps:.1f} FPS, {total_frames} frames")
+        print("Press 'q' to quit, 'r' to reset, 's' to score rep\n")
+
         self.running = True
-        print("\nPress 'q' to quit, 'c' to calibrate, 's' to start exercise")
+        self.session_start_time = time.time()
 
         while self.running:
             ret, frame = cap.read()
             if not ret:
+                if source != "webcam":
+                    print("\nVideo ended")
                 break
 
             self.frame_count += 1
-            timestamp_ms = int(self.frame_count * (1000 / 30))
+            timestamp_ms = int(self.frame_count * (1000 / fps))
+            timestamp_s = self.frame_count / fps
 
             # Process frame
-            display_frame = self._process_frame(frame, timestamp_ms)
+            display, pose_result, face_result = self._process_frame(frame, timestamp_ms, timestamp_s)
 
             # Display
-            cv2.imshow("ADAPT-Rehab v3.0", display_frame)
+            cv2.imshow("ADAPT-Rehab v3.0", display)
 
-            # Handle keyboard
+            # Keyboard
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 self.running = False
-            elif key == ord('c'):
-                self._start_calibration()
+            elif key == ord('r'):
+                self._reset_session()
             elif key == ord('s'):
-                self._start_exercise()
+                self._score_current_rep()
 
-        # Cleanup
         cap.release()
         cv2.destroyAllWindows()
+        self._print_session_summary()
         self._cleanup()
 
-    def _process_frame(self, frame: np.ndarray, timestamp_ms: int) -> np.ndarray:
-        """Process a single frame through all layers."""
+    def _process_frame(self, frame: np.ndarray, timestamp_ms: int, timestamp_s: float):
+        """Process a single frame through all pipelines."""
         display = frame.copy()
+        pose_result = None
+        face_result = None
 
-        # Perception: 3D Pose
+        # === Pose Estimation ===
         pose_result = self.pose_estimator.estimate(frame, timestamp_ms)
 
-        if pose_result.is_valid:
+        if pose_result.is_valid and pose_result.keypoints_3d is not None:
             # Draw skeleton
-            if pose_result.keypoints_2d is not None:
-                display = draw_skeleton(display, pose_result.keypoints_2d)
+            self._draw_skeleton(display, pose_result)
 
-            # Display joint angles
-            y_offset = 30
-            for joint, angle in pose_result.joint_angles.items():
-                text = f"{joint}: {angle:.1f}°"
-                cv2.putText(display, text, (10, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                y_offset += 20
+            # Store for analysis
+            self.angles_history.append(pose_result.joint_angles)
+            self.timestamps.append(timestamp_s)
+            self.pose_history.append(pose_result.keypoints_3d)
 
-        # Perception: Face Analysis
-        face_result = self.face_detector.detect(frame)
-        if face_result.is_valid and face_result.bbox is not None:
-            x1, y1, x2, y2 = face_result.bbox.astype(int)
+            # Draw angles
+            self._draw_angles(display, pose_result.joint_angles)
+
+        # === Face Analysis ===
+        if self.face_analyzer:
+            face_result = self.face_analyzer.analyze(frame, timestamp_ms)
+            if face_result.is_valid:
+                self._draw_face_info(display, face_result)
+
+        # === Draw HUD ===
+        self._draw_hud(display, pose_result, face_result)
+
+        return display, pose_result, face_result
+
+    def _draw_skeleton(self, display: np.ndarray, pose_result: Pose3DResult):
+        """Draw skeleton overlay on frame."""
+        if pose_result.keypoints_2d is None:
+            return
+
+        kps = pose_result.keypoints_2d
+
+        # Draw connections
+        connections = [
+            (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),  # Arms
+            (11, 23), (12, 24), (23, 24),  # Torso
+            (23, 25), (25, 27), (24, 26), (26, 28),  # Legs
+        ]
+
+        for i, j in connections:
+            if i < len(kps) and j < len(kps):
+                pt1 = (int(kps[i][0]), int(kps[i][1]))
+                pt2 = (int(kps[j][0]), int(kps[j][1]))
+                cv2.line(display, pt1, pt2, (0, 255, 0), 2)
+
+        # Draw joints
+        for i, kp in enumerate(kps):
+            if i in [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]:
+                cv2.circle(display, (int(kp[0]), int(kp[1])), 4, (0, 0, 255), -1)
+
+    def _draw_angles(self, display: np.ndarray, angles: Dict[str, float]):
+        """Draw angle values on frame."""
+        y = 30
+        for joint, angle in sorted(angles.items()):
+            text = f"{joint}: {angle:.1f}°"
+            cv2.putText(display, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            y += 20
+
+    def _draw_face_info(self, display: np.ndarray, face_result: FaceAnalysisResult):
+        """Draw face analysis results on frame."""
+        h, w = display.shape[:2]
+
+        # Draw face bbox
+        if face_result.face_bbox is not None:
+            x1, y1, x2, y2 = face_result.face_bbox.astype(int)
             cv2.rectangle(display, (x1, y1), (x2, y2), (255, 0, 0), 2)
 
-        # Display FPS
-        fps_text = f"FPS: {pose_result.fps:.0f} | Model: {pose_result.model_name}"
-        cv2.putText(display, fps_text, (10, display.shape[0] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Draw emotion and pain
+        text_y = h - 80
+        emotion_text = f"Emotion: {face_result.emotion.value} ({face_result.emotion_confidence:.1%})"
+        cv2.putText(display, emotion_text, (10, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
-        return display
+        pain_text = f"Pain: {face_result.pain_level} (PSPI={face_result.pain_score:.1f})"
+        color = (0, 255, 0) if face_result.pain_level == "NONE" else (0, 0, 255)
+        cv2.putText(display, pain_text, (10, text_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-    def _start_calibration(self):
-        """Start ROM calibration."""
-        print("\n[Calibration] Starting Safe-Max Calibration...")
-        self.current_phase = "calibration"
+    def _draw_hud(self, display: np.ndarray, pose_result, face_result):
+        """Draw heads-up display."""
+        h, w = display.shape[:2]
 
-    def _start_exercise(self):
-        """Start exercise session."""
-        print("\n[Exercise] Starting exercise session...")
-        self.current_phase = "exercise"
+        # FPS and model info
+        fps_text = f"Frame: {self.frame_count} | Model: {self.pose_estimator.model_name}"
+        cv2.putText(display, fps_text, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
-        if self.coach:
-            self.coach.start_exercise("Arm Raise", {"age": 70})
+        # Rep count
+        rep_text = f"Reps: {self.rep_count}"
+        cv2.putText(display, rep_text, (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # Recent scores
+        if self.scorer._rep_scores:
+            last = self.scorer._rep_scores[-1]
+            score_text = f"Score: {last.total_score:.0f}/100"
+            cv2.putText(display, score_text, (w - 200, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+
+    def _score_current_rep(self):
+        """Score the current rep from accumulated data."""
+        if len(self.angles_history) < 10:
+            print("Not enough data for scoring (need >= 10 frames)")
+            return
+
+        # Use left shoulder angle as primary
+        angles = np.array([a.get("left_shoulder", 0) for a in self.angles_history])
+        ts = np.array(self.timestamps)
+        target = float(np.max(angles)) * 1.1
+
+        score = self.scorer.score_rep(
+            angles=angles,
+            timestamps=ts,
+            target_angle=target,
+            pose_sequence=self.pose_history[-30:],  # Last 30 frames
+        )
+
+        self.rep_count += 1
+        print(f"\n--- Rep {self.rep_count} ---")
+        print(f"  ROM: {score.rom_score:.1f}")
+        print(f"  Stability: {score.stability_score:.1f}")
+        print(f"  Flow: {score.flow_score:.1f}")
+        print(f"  Compensation: {score.compensation_score:.1f}")
+        print(f"  Smoothness: {score.smoothness_score:.1f}")
+        print(f"  TOTAL: {score.total_score:.1f}/100")
+        print(f"  Fatigue: {score.fatigue.name}")
+
+        # Reset for next rep
+        self.angles_history = []
+        self.timestamps = []
+        self.pose_history = []
+
+    def _reset_session(self):
+        """Reset session state."""
+        self.frame_count = 0
+        self.angles_history = []
+        self.timestamps = []
+        self.pose_history = []
+        self.rep_count = 0
+        self.scorer.start_session("v3_session")
+        print("\nSession reset")
+
+    def _print_session_summary(self):
+        """Print session summary."""
+        report = self.scorer.get_session_report()
+        if not report or report.total_reps == 0:
+            print("\nNo reps completed in this session")
+            return
+
+        print("\n" + "=" * 60)
+        print("SESSION SUMMARY")
+        print("=" * 60)
+        print(f"Exercise: {report.exercise_name}")
+        print(f"Total Reps: {report.total_reps}")
+        print(f"\nAverage Scores:")
+        for dim, score in report.average_scores.items():
+            print(f"  {dim}: {score:.1f}")
+        print("=" * 60)
 
     def _cleanup(self):
         """Release all resources."""
-        print("\n[Cleanup] Releasing resources...")
         if self.pose_estimator:
             self.pose_estimator.close()
-        if self.face_detector:
-            self.face_detector.close()
-        if self.llm_client:
-            self.llm_client.close()
-        self.logger.end_session()
-        print("[Cleanup] Done!")
+        if self.face_analyzer:
+            self.face_analyzer.close()
+        if self.coach:
+            self.coach.close()
 
 
 def parse_args():
-    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="ADAPT-Rehab v3.0")
-
-    # Input
-    parser.add_argument("--source", type=str, default="webcam",
-                        help="Video source (webcam, path, or RTSP URL)")
-    parser.add_argument("--ref-video", type=str, default=None,
-                        help="Reference exercise video path")
-
-    # Pose estimation
+    parser.add_argument("--source", type=str, default="webcam", help="Video source (webcam or path)")
     parser.add_argument("--pose-backend", type=str, default="mediapipe_fallback",
-                        choices=["metrab", "hybrik", "mediapipe_fallback"],
-                        help="3D pose estimation backend")
-    parser.add_argument("--pose-model", type=str, default=None,
-                        help="Path to pose model file")
-
-    # Face analysis
-    parser.add_argument("--enable-au", action="store_true",
-                        help="Enable Action Unit detection")
-    parser.add_argument("--enable-emotion", action="store_true",
-                        help="Enable emotion classification")
-    parser.add_argument("--emotion-model", type=str, default=None,
-                        help="Path to emotion model file")
-
-    # LLM
-    parser.add_argument("--llm-provider", type=str, default="openai",
-                        choices=["openai", "anthropic"],
-                        help="LLM API provider")
-    parser.add_argument("--llm-api-key", type=str, default=None,
-                        help="LLM API key (or set OPENAI_API_KEY/ANTHROPIC_API_KEY env)")
-
-    # TTS
-    parser.add_argument("--tts-voice", type=str, default="vi-VN-HoaiMyNeural",
-                        help="Edge-TTS voice name")
-
-    # User
-    parser.add_argument("--user-profile", type=str, default=None,
-                        help="Path to user profile JSON")
-
-    # Mode
-    parser.add_argument("--mode", type=str, default="full",
-                        choices=["full", "demo", "calibration", "test"],
-                        help="Application mode")
-
+                        choices=["metrab", "hybrik", "mediapipe_fallback"])
+    parser.add_argument("--pose-model", type=str, default=None, help="Path to pose model")
+    parser.add_argument("--llm-provider", type=str, default="openai", choices=["openai", "anthropic"])
+    parser.add_argument("--llm-api-key", type=str, default=None, help="LLM API key")
+    parser.add_argument("--mode", type=str, default="full", choices=["full", "demo"])
     return parser.parse_args()
 
 
 def main():
-    """Main entry point."""
     args = parse_args()
 
-    # Resolve API key from environment if not provided
+    # Resolve API key
     if args.llm_api_key is None:
         args.llm_api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
 
-    # Create and run application
     app = ADAPTRehabV3(args)
-
     if not app.initialize():
         print("Initialization failed!")
         sys.exit(1)
