@@ -8,7 +8,9 @@
 # 2. Whitelist allowed root files
 !/.gitignore
 !/main_v2.py
+!/main_v3.py
 !/requirements.txt
+!/README.md
 
 # 3. Whitelist allowed root directories
 !/assets/
@@ -18,6 +20,10 @@
 !/modules/
 !/scripts/
 !/utils/
+!/evaluation/
+!/tests/
+!/docs/
+!/.claude/
 
 # 4. Ignore rules inside Whitelisted Directories
 
@@ -33,6 +39,11 @@ assets/**/*.webm
 data/**/*
 !data/**/
 !data/**/.gitkeep
+
+# Datasets: never push video/image datasets
+data/yoga_datasets/
+data/knowledge_base/
+!data/knowledge_base/*.md
 
 # Models: ignore all heavy model files (.task, etc.) but keep the directory
 models/**/*

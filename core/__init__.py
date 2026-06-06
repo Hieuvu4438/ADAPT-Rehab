@@ -23,10 +23,14 @@ from .data_types import (
     PoseLandmarkIndex,
 )
 
-from .detector import (
-    VisionDetector,
-    DetectorConfig,
-)
+try:
+    from .detector import (
+        VisionDetector,
+        DetectorConfig,
+    )
+except ImportError:
+    # MediaPipe not available — detector will be unavailable
+    pass
 
 from .procrustes import (
     normalize_skeleton,
