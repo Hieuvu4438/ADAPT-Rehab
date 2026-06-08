@@ -2,7 +2,7 @@
 Abstract base class for 3D pose estimation.
 
 Defines the interface that all 3D pose estimators must implement.
-This allows swapping between MeTRAbs, HybrIK, or fallback implementations.
+This allows swapping between different 3D pose estimation backends.
 
 Author: ADAPT-Rehab Team
 Version: 3.0.0
@@ -17,18 +17,13 @@ import numpy as np
 
 class PoseEstimatorType(Enum):
     """Available pose estimator backends."""
-    METRABS = "metrab"
-    HYBRIK = "hybrik"
-    MEDIAPIPE_FALLBACK = "mediapipe_fallback"
+    RTMW3D = "rtmw3d"
 
 
 @dataclass
 class Pose3DResult:
     """
     Result of 3D pose estimation.
-
-    All coordinates are in metric scale (centimeters) with origin
-    at the hip center when using MeTRAbs/HybrIK.
 
     Attributes:
         keypoints_3d: 3D joint positions, shape (N, 3).
@@ -40,6 +35,7 @@ class Pose3DResult:
         model_name: Name of the estimator model used.
         is_valid: Whether the result is valid.
         error_message: Error message if invalid.
+        metadata: Additional metadata about the result.
     """
     keypoints_3d: Optional[np.ndarray] = None
     keypoints_2d: Optional[np.ndarray] = None
@@ -78,14 +74,15 @@ class PoseEstimator3D(ABC):
     Abstract base class for 3D pose estimators.
 
     Example:
-        >>> estimator = MeTRAbsEstimator()
-        >>> estimator.initialize(model_path="models/metrib_384.bin")
+        >>> estimator = RTMW3DEstimator()
+        >>> estimator.initialize()
         >>> result = estimator.estimate(frame)
         >>> if result.is_valid:
         ...     print(f"Shoulder: {result.joint_angles['left_shoulder']:.1f}deg")
     """
 
     # Joint angle definitions: (proximal_idx, vertex_idx, distal_idx)
+    # Default: MediaPipe-style indices (can be overridden by subclasses)
     JOINT_ANGLE_DEFS = {
         "left_shoulder": (23, 11, 13),
         "right_shoulder": (24, 12, 14),
@@ -167,14 +164,27 @@ class PoseEstimator3D(ABC):
         return False
 
 
-def create_estimator(estimator_type: str = "metrab", **kwargs) -> PoseEstimator3D:
-    """Factory function to create a pose estimator."""
-    estimators = {
-        "metrab": MeTRAbsEstimator,
-        "hybrik": HybrIKEstimator,
-        "mediapipe_fallback": MediaPipeFallbackEstimator,
-    }
+def create_estimator(estimator_type: str = "rtmw3d", **kwargs) -> PoseEstimator3D:
+    """Factory function to create a pose estimator.
+
+    Args:
+        estimator_type: Type of estimator to create.
+            - "rtmw3d": RTMW3D (default, SOTA, real-time)
+        **kwargs: Additional arguments passed to the estimator.
+
+    Returns:
+        PoseEstimator3D instance.
+
+    Raises:
+        ValueError: If estimator_type is not recognized.
+    """
     estimator_type = estimator_type.lower()
-    if estimator_type not in estimators:
-        raise ValueError(f"Unknown: {estimator_type}. Available: {list(estimators.keys())}")
-    return estimators[estimator_type](**kwargs)
+
+    if estimator_type == "rtmw3d":
+        from .rtmw3d import RTMW3DEstimator
+        return RTMW3DEstimator(**kwargs)
+    else:
+        raise ValueError(
+            f"Unknown estimator: {estimator_type}. "
+            f"Available: ['rtmw3d']"
+        )

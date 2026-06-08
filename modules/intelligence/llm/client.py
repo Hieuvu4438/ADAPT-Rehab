@@ -1,13 +1,23 @@
 """
 LLM API Client.
 
-Uses GPT-4o or Claude API (not self-hosted).
-Standard practice for research papers.
+Supports multiple LLM providers:
+- Gemini (Google)
+- OpenAI (GPT-4o)
+- Anthropic (Claude)
+- MiMo (Xiaomi)
 
 Usage:
-    client = LLMClient(provider="openai", api_key="sk-...")
+    # Gemini
+    client = LLMClient(provider="gemini", api_key="AQ.Ab8R...")
     client.initialize()
     response = client.chat("What exercises for shoulder pain?")
+
+    # OpenAI
+    client = LLMClient(provider="openai", api_key="sk-...")
+
+    # Claude
+    client = LLMClient(provider="anthropic", api_key="sk-ant-...")
 """
 
 from dataclasses import dataclass
@@ -17,12 +27,15 @@ import time
 
 
 class LLMProvider(Enum):
+    GEMINI = "gemini"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    MIMO = "mimo"
 
 
 @dataclass
 class LLMResponse:
+    """Response from LLM API."""
     content: str = ""
     model: str = ""
     tokens_used: int = 0
@@ -32,61 +45,244 @@ class LLMResponse:
 
 
 class LLMClient:
-    """Unified LLM API client for GPT-4o and Claude."""
+    """Unified LLM API client.
 
-    def __init__(self, provider: str = "openai", api_key: Optional[str] = None, model: Optional[str] = None):
+    Supports:
+    - Google Gemini (gemini-2.0-flash, gemini-1.5-pro, etc.)
+    - OpenAI (GPT-4o, GPT-4, etc.)
+    - MiMo (Xiaomi MiMo, OpenAI-compatible)
+    - Anthropic (Claude)
+    """
+
+    def __init__(self, provider: str = "gemini", api_key: Optional[str] = None, model: Optional[str] = None):
+        """Initialize LLM client.
+
+        Args:
+            provider: LLM provider name ("gemini", "openai", "anthropic", "mimo")
+            api_key: API key
+            model: Model name (default depends on provider)
+        """
         self._provider = LLMProvider(provider.lower())
         self._api_key = api_key
-        self._model = model or ("gpt-4o" if self._provider == LLMProvider.OPENAI else "claude-sonnet-4-20250514")
+
+        # Default models per provider
+        defaults = {
+            LLMProvider.GEMINI: "gemini-2.0-flash",
+            LLMProvider.OPENAI: "gpt-4o",
+            LLMProvider.ANTHROPIC: "claude-sonnet-4-20250514",
+            LLMProvider.MIMO: "mimo-v2.5-pro",
+        }
+        self._model = model or defaults.get(self._provider, "gemini-2.0-flash")
         self._client = None
         self._is_initialized = False
 
     def initialize(self, **kwargs) -> bool:
+        """Initialize the LLM client.
+
+        Returns:
+            True if initialization successful.
+        """
         try:
-            if self._provider == LLMProvider.OPENAI:
+            if self._provider == LLMProvider.GEMINI:
+                # Gemini uses REST API directly, no SDK needed
+                # Just verify API key format
+                if not self._api_key or len(self._api_key) < 10:
+                    print("[LLM] Invalid Gemini API key")
+                    return False
+                self._client = "gemini_rest"  # Marker for REST API
+
+            elif self._provider in (LLMProvider.OPENAI, LLMProvider.MIMO):
                 from openai import OpenAI
-                self._client = OpenAI(api_key=self._api_key)
-            else:
+
+                if self._provider == LLMProvider.MIMO:
+                    self._client = OpenAI(
+                        api_key=self._api_key,
+                        base_url="https://api.xiaomimimo.com/v1",
+                    )
+                else:
+                    self._client = OpenAI(api_key=self._api_key)
+
+            elif self._provider == LLMProvider.ANTHROPIC:
                 from anthropic import Anthropic
                 self._client = Anthropic(api_key=self._api_key)
+
             self._is_initialized = True
+            print(f"[LLM] Initialized: {self._provider.value} / {self._model}")
             return True
-        except ImportError:
-            pkg = "openai" if self._provider == LLMProvider.OPENAI else "anthropic"
-            print(f"[LLM] Install: pip install {pkg}")
+
+        except ImportError as e:
+            print(f"[LLM] Missing package: {e}")
+            if self._provider == LLMProvider.GEMINI:
+                print("[LLM] Install: pip install google-generativeai")
+            else:
+                print("[LLM] Install: pip install openai anthropic")
+            return False
+        except Exception as e:
+            print(f"[LLM] Init failed: {e}")
             return False
 
-    def chat(self, message: str, system_prompt: Optional[str] = None,
-             history: Optional[List[Dict]] = None, temperature: float = 0.7, max_tokens: int = 500) -> LLMResponse:
+    def chat(
+        self,
+        message: str,
+        system_prompt: Optional[str] = None,
+        history: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 500,
+    ) -> LLMResponse:
+        """Send a chat message to the LLM.
+
+        Args:
+            message: User message
+            system_prompt: System prompt (optional)
+            history: Previous conversation history (optional)
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens in response
+
+        Returns:
+            LLMResponse with content, model, tokens_used, etc.
+        """
         if not self._is_initialized:
             return LLMResponse(error_message="Not initialized")
+
         try:
             start = time.time()
-            if self._provider == LLMProvider.OPENAI:
+
+            if self._provider == LLMProvider.GEMINI:
+                resp = self._chat_gemini(message, system_prompt, history, temperature, max_tokens)
+            elif self._provider in (LLMProvider.OPENAI, LLMProvider.MIMO):
                 resp = self._chat_openai(message, system_prompt, history, temperature, max_tokens)
-            else:
+            elif self._provider == LLMProvider.ANTHROPIC:
                 resp = self._chat_anthropic(message, system_prompt, history, temperature, max_tokens)
+            else:
+                return LLMResponse(error_message=f"Unknown provider: {self._provider}")
+
             resp.latency_ms = (time.time() - start) * 1000
             return resp
+
+        except Exception as e:
+            return LLMResponse(error_message=str(e))
+
+    def _chat_gemini(self, msg, sys, hist, temp, max_t) -> LLMResponse:
+        """Chat using Google Gemini REST API (no SDK dependency)."""
+        import json
+        import urllib.request
+
+        # Build contents array
+        contents = []
+
+        # Add system instruction if provided
+        system_instruction = None
+        if sys:
+            system_instruction = {"parts": [{"text": sys}]}
+
+        # Add history
+        if hist:
+            for h in hist:
+                role = h.get("role", "user")
+                content = h.get("content", "")
+                contents.append({
+                    "role": "user" if role == "user" else "model",
+                    "parts": [{"text": content}]
+                })
+
+        # Add current message
+        contents.append({"role": "user", "parts": [{"text": msg}]})
+
+        # Build request body
+        body = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temp,
+                "maxOutputTokens": max_t,
+            }
+        }
+        if system_instruction:
+            body["systemInstruction"] = system_instruction
+
+        # Make REST API call
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={self._api_key}"
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+
+            # Extract response text
+            content = ""
+            if "candidates" in result and len(result["candidates"]) > 0:
+                candidate = result["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"]:
+                    parts = candidate["content"]["parts"]
+                    content = "".join(p.get("text", "") for p in parts)
+
+            # Extract token usage
+            tokens_used = 0
+            if "usageMetadata" in result:
+                usage = result["usageMetadata"]
+                tokens_used = usage.get("totalTokenCount", 0)
+
+            return LLMResponse(
+                content=content,
+                model=self._model,
+                tokens_used=tokens_used,
+                is_valid=True,
+            )
+
         except Exception as e:
             return LLMResponse(error_message=str(e))
 
     def _chat_openai(self, msg, sys, hist, temp, max_t) -> LLMResponse:
+        """Chat using OpenAI-compatible API (OpenAI, MiMo, etc.)."""
         msgs = []
-        if sys: msgs.append({"role": "system", "content": sys})
-        if hist: msgs.extend(hist)
+        if sys:
+            msgs.append({"role": "system", "content": sys})
+        if hist:
+            msgs.extend(hist)
         msgs.append({"role": "user", "content": msg})
-        r = self._client.chat.completions.create(model=self._model, messages=msgs, temperature=temp, max_tokens=max_t)
-        return LLMResponse(content=r.choices[0].message.content, model=r.model, tokens_used=r.usage.total_tokens, is_valid=True)
+
+        r = self._client.chat.completions.create(
+            model=self._model,
+            messages=msgs,
+            temperature=temp,
+            max_tokens=max_t,
+        )
+
+        return LLMResponse(
+            content=r.choices[0].message.content,
+            model=r.model,
+            tokens_used=r.usage.total_tokens if r.usage else 0,
+            is_valid=True,
+        )
 
     def _chat_anthropic(self, msg, sys, hist, temp, max_t) -> LLMResponse:
-        kw = {"model": self._model, "max_tokens": max_t, "temperature": temp, "messages": []}
-        if sys: kw["system"] = sys
-        if hist: kw["messages"].extend(hist)
+        """Chat using Anthropic Claude API."""
+        kw = {
+            "model": self._model,
+            "max_tokens": max_t,
+            "temperature": temp,
+            "messages": [],
+        }
+        if sys:
+            kw["system"] = sys
+        if hist:
+            kw["messages"].extend(hist)
         kw["messages"].append({"role": "user", "content": msg})
+
         r = self._client.messages.create(**kw)
-        return LLMResponse(content=r.content[0].text, model=r.model, tokens_used=r.usage.input_tokens + r.usage.output_tokens, is_valid=True)
+
+        return LLMResponse(
+            content=r.content[0].text,
+            model=r.model,
+            tokens_used=r.usage.input_tokens + r.usage.output_tokens,
+            is_valid=True,
+        )
 
     def close(self):
+        """Release resources."""
         self._client = None
         self._is_initialized = False

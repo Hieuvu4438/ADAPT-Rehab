@@ -44,8 +44,12 @@ class SmoothnessAnalyzer:
             ldjl = self._ldlj(angles, timestamps)
             nvp = self._nvp(velocity)
 
-            sparc_score = max(0, min(100, (sparc + 2) / 2 * 100))
-            ldjl_score = max(0, min(100, (ldjl + 10) / 8 * 100))
+            # SPARC normalization: use empirical range from Balasubramanian 2015
+            # Typical rehabilitation movements: SPARC in [-3, 0]
+            # Map: -3 → 100 (very smooth), 0 → 0 (very jerky)
+            sparc_score = max(0, min(100, (sparc + 3.0) / 3.0 * 100))
+            # LDLJ normalization: typical range is [-10, 0]
+            ldjl_score = max(0, min(100, (ldjl + 10) / 10 * 100))
             score = 0.6 * sparc_score + 0.4 * ldjl_score
 
             return SmoothnessResult(sparc=sparc, ldjl=ldjl, nvp=nvp, smoothness_score=score, is_valid=True)
@@ -53,13 +57,52 @@ class SmoothnessAnalyzer:
             return SmoothnessResult(is_valid=False)
 
     def _sparc(self, velocity: np.ndarray, fs: float) -> float:
+        """Spectral Arc Length (SPARC) per Balasubramanian et al. 2015.
+
+        Returns a value in [-2, 0] where MORE NEGATIVE = SMOOTHER.
+        - -2.0: very smooth (single bell-shaped velocity profile)
+        - 0.0: very jerky (impulsive movement)
+        """
         n = len(velocity)
         freq = np.fft.rfftfreq(n, d=1.0 / fs)
         mag = np.abs(np.fft.rfft(velocity))
         if np.max(mag) < 1e-10:
             return 0.0
+
+        # Normalize magnitude by its max
         mag_norm = mag / np.max(mag)
-        return float(-np.sum(np.sqrt(np.diff(freq)**2 + np.diff(mag_norm)**2)))
+
+        # Find cutoff frequency: where normalized magnitude drops below threshold
+        # Use adaptive threshold based on signal characteristics
+        threshold = 0.05
+        above_threshold = np.where(mag_norm > threshold)[0]
+        if len(above_threshold) == 0:
+            return 0.0
+
+        # Use frequency range up to where magnitude is significant
+        f_max = freq[above_threshold[-1]]
+        f_0 = freq[above_threshold[0]]
+        freq_range = f_max - f_0
+
+        if freq_range < 1e-10:
+            return 0.0
+
+        # Compute arc length of the normalized magnitude spectrum
+        # Only up to the cutoff frequency
+        cutoff_idx = above_threshold[-1] + 1
+        freq_crop = freq[:cutoff_idx]
+        mag_crop = mag_norm[:cutoff_idx]
+
+        df = np.diff(freq_crop)
+        dm = np.diff(mag_crop)
+        arc_length = np.sum(np.sqrt(df ** 2 + dm ** 2))
+
+        # SPARC = -arc_length / freq_range
+        # Normalized to be independent of signal length
+        sparc = -arc_length / freq_range
+
+        # Clip to typical range
+        return float(np.clip(sparc, -2.0, 0.0))
 
     def _ldlj(self, angles: np.ndarray, timestamps: Optional[np.ndarray] = None) -> float:
         n = len(angles)

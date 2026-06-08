@@ -150,11 +150,11 @@ class FaceAnalyzer:
 
         landmarks = face_result.landmarks
 
-        # Step 2: Detect AU and pain
-        au_result = self._au_detector.detect(landmarks)
+        # Step 2: Detect AU and pain (pass frame for deep learning backends)
+        au_result = self._au_detector.detect(landmarks, face_image=frame)
 
-        # Step 3: Classify emotion
-        emotion_result = self._emotion_classifier.classify(landmarks)
+        # Step 3: Classify emotion (pass frame for deep learning backends)
+        emotion_result = self._emotion_classifier.classify(landmarks, face_image=frame)
 
         # Combine results
         return FaceAnalysisResult(

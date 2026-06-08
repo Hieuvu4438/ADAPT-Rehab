@@ -10,7 +10,7 @@ Uses temporal analysis over pose sequences for robustness,
 rather than frame-by-frame threshold methods.
 
 Usage:
-    detector = CompensationDetector(window_size=30)
+    detector = CompensationDetector()
     result = detector.analyze(pose_sequence)
     if result.score < 80:
         print(f"Compensation: {result.detected_types}")
@@ -39,7 +39,17 @@ class CompensationEvent:
 
 @dataclass
 class CompensationResult:
-    """Result of compensation analysis."""
+    """Result of compensation analysis.
+
+    Attributes:
+        events: List of detected compensation events.
+        score: Overall score (100 = no compensation, 0 = severe).
+        detected_types: Human-readable Vietnamese labels.
+        shoulder_diff_avg: Average shoulder height difference.
+        trunk_tilt_avg: Average trunk tilt angle (degrees).
+        hip_diff_avg: Average hip horizontal difference.
+        is_valid: Whether analysis was performed successfully.
+    """
     events: List[CompensationEvent] = field(default_factory=list)
     score: float = 100.0  # 100 = no compensation
     detected_types: List[str] = field(default_factory=list)
@@ -111,23 +121,23 @@ class CompensationDetector:
         # Shoulder height difference
         ls = pose_landmarks[self.LEFT_SHOULDER]
         rs = pose_landmarks[self.RIGHT_SHOULDER]
-        self._shoulder_history.append(abs(ls[1] - rs[1]))
+        self._shoulder_history.append(abs(float(ls[1] - rs[1])))
 
         # Trunk tilt
-        mid_shoulder = (ls + rs) / 2
-        mid_hip = (pose_landmarks[self.LEFT_HIP] + pose_landmarks[self.RIGHT_HIP]) / 2
+        mid_shoulder = (ls[:2] + rs[:2]) / 2
+        mid_hip = (pose_landmarks[self.LEFT_HIP][:2] + pose_landmarks[self.RIGHT_HIP][:2]) / 2
         dx = mid_hip[0] - mid_shoulder[0]
         dy = mid_hip[1] - mid_shoulder[1]
         if abs(dy) > 1e-6:
             tilt = abs(np.degrees(np.arctan2(dx, dy)))
-            self._trunk_history.append(tilt)
         else:
-            self._trunk_history.append(0.0)
+            tilt = 0.0
+        self._trunk_history.append(tilt)
 
-        # Hip shift
+        # Hip shift (vertical height difference between hips)
         lh = pose_landmarks[self.LEFT_HIP]
         rh = pose_landmarks[self.RIGHT_HIP]
-        self._hip_history.append(abs(lh[1] - rh[1]))
+        self._hip_history.append(abs(float(lh[1] - rh[1])))
 
         # Keep window size
         if len(self._shoulder_history) > self._window_size:

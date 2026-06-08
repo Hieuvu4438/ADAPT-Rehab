@@ -11,7 +11,6 @@ Architecture:
 Usage:
     python main_v3.py --source webcam
     python main_v3.py --source data/yoga_datasets/Yoga_Vid_Collected/Abhay_Bhujangasana.mp4
-    python main_v3.py --mode demo
 
 Author: ADAPT-Rehab Team
 Version: 3.0.0
@@ -37,15 +36,25 @@ from modules.compensation import CompensationDetector
 from modules.fatigue import FatigueAnalyzer, FatigueLevel
 from modules.scoring_v2 import EnhancedScorer, RepScoreV2
 
-# Intelligence (optional)
-try:
-    from modules.intelligence.llm.client import LLMClient
-    from modules.intelligence.llm.safety import SafetyGuardrails
-    from modules.intelligence.voice.tts import TextToSpeech
-    from modules.intelligence.coach.rehab_coach import RehabCoach
-    LLM_AVAILABLE = True
-except ImportError:
-    LLM_AVAILABLE = False
+# Intelligence
+from modules.intelligence.llm.client import LLMClient
+from modules.intelligence.llm.safety import SafetyGuardrails
+from modules.intelligence.voice.tts import TextToSpeech
+from modules.intelligence.coach.rehab_coach import RehabCoach
+
+
+# RTMW3D body skeleton connections (133 keypoints)
+# Body joints: 0-32, Hands: 33-72, Face: 73-130
+RTMW3D_CONNECTIONS = [
+    # Torso
+    (0, 1), (0, 2), (1, 3), (2, 4),  # pelvis to hips, hips to knees
+    # Arms
+    (5, 7), (7, 9), (6, 8), (8, 10),  # shoulders to elbows to wrists
+    # Legs
+    (11, 13), (13, 15), (12, 14), (14, 16),  # hips to knees to ankles
+    # Spine
+    (0, 17),  # pelvis to spine
+]
 
 
 class ADAPTRehabV3:
@@ -53,9 +62,9 @@ class ADAPTRehabV3:
     ADAPT-Rehab v3.0 Main Application.
 
     Integrates all layers:
-    - Perception: 3D pose + face analysis
-    - Analysis: Kinematics + scoring
-    - Intelligence: LLM coaching + voice
+    - Perception: RTMW3D 3D pose + face analysis
+    - Analysis: Quaternion kinematics + SPARC + compensation + fatigue
+    - Intelligence: MiMo LLM + Whisper ASR + Edge-TTS
     - Output: Visual + audio feedback
     """
 
@@ -76,6 +85,7 @@ class ADAPTRehabV3:
 
         # Intelligence
         self.coach: Optional[RehabCoach] = None
+        self.tts: Optional[TextToSpeech] = None
 
         # State
         self.frame_count = 0
@@ -84,6 +94,8 @@ class ADAPTRehabV3:
         self.pose_history: List[np.ndarray] = []
         self.rep_count = 0
         self.session_start_time = 0.0
+        self.last_feedback_time = 0.0
+        self.feedback_interval = 10.0  # seconds between LLM feedback
 
     def initialize(self) -> bool:
         """Initialize all components."""
@@ -91,34 +103,45 @@ class ADAPTRehabV3:
         print("ADAPT-Rehab v3.0 - Multimodal AI Rehabilitation")
         print("=" * 60)
 
-        # 1. Pose Estimator
-        print("\n[1/3] Initializing Pose Estimator...")
-        backend = self.args.pose_backend
-        self.pose_estimator = create_estimator(backend)
+        # 1. Pose Estimator (RTMW3D only)
+        print("\n[1/4] Initializing RTMW3D Pose Estimator...")
+        self.pose_estimator = create_estimator("rtmw3d")
         if not self.pose_estimator.initialize():
-            print(f"  ⚠ {backend} failed, falling back to mediapipe_fallback")
-            self.pose_estimator = create_estimator("mediapipe_fallback")
-            self.pose_estimator.initialize()
+            print("  ✗ RTMW3D initialization failed!")
+            return False
         print(f"  ✓ Pose: {self.pose_estimator.model_name}")
 
         # 2. Face Analyzer
-        print("[2/3] Initializing Face Analyzer...")
+        print("[2/4] Initializing Face Analyzer...")
         self.face_analyzer = FaceAnalyzer()
         if self.face_analyzer.initialize():
-            print("  ✓ Face: MediaPipe Face Mesh")
+            print("  ✓ Face: MediaPipe Face Mesh + AU + Emotion")
         else:
-            print("  ⚠ Face detection unavailable (model not found)")
+            print("  ⚠ Face detection unavailable")
             self.face_analyzer = None
 
-        # 3. Intelligence (optional)
-        print("[3/3] Initializing Intelligence Layer...")
-        if LLM_AVAILABLE and self.args.llm_api_key:
+        # 3. TTS
+        print("[3/4] Initializing TTS...")
+        try:
+            self.tts = TextToSpeech()
+            print("  ✓ TTS: Edge-TTS (Vietnamese)")
+        except Exception as e:
+            print(f"  ⚠ TTS unavailable: {e}")
+            self.tts = None
+
+        # 4. LLM Coach
+        print("[4/4] Initializing LLM Coach...")
+        if self.args.llm_api_key:
             try:
-                llm = LLMClient(provider=self.args.llm_provider, api_key=self.args.llm_api_key)
+                llm = LLMClient(
+                    provider=self.args.llm_provider,
+                    api_key=self.args.llm_api_key,
+                    model=self.args.llm_model,
+                )
                 llm.initialize()
                 safety = SafetyGuardrails()
                 self.coach = RehabCoach(llm_client=llm, safety=safety)
-                print("  ✓ LLM coaching enabled")
+                print(f"  ✓ LLM: {self.args.llm_model}")
             except Exception as e:
                 print(f"  ⚠ LLM unavailable: {e}")
         else:
@@ -130,7 +153,8 @@ class ADAPTRehabV3:
         print("\n✓ All components initialized")
         print(f"  Pose: {self.pose_estimator.model_name}")
         print(f"  Face: {'Enabled' if self.face_analyzer else 'Disabled'}")
-        print(f"  LLM: {'Enabled' if self.coach else 'Disabled'}")
+        print(f"  LLM: {self.args.llm_model if self.coach else 'Disabled'}")
+        print(f"  TTS: {'Enabled' if self.tts else 'Disabled'}")
         print("=" * 60)
         return True
 
@@ -170,6 +194,11 @@ class ADAPTRehabV3:
 
             # Process frame
             display, pose_result, face_result = self._process_frame(frame, timestamp_ms, timestamp_s)
+
+            # Periodic LLM feedback
+            if self.coach and (timestamp_s - self.last_feedback_time) > self.feedback_interval:
+                self._generate_feedback(pose_result, face_result)
+                self.last_feedback_time = timestamp_s
 
             # Display
             cv2.imshow("ADAPT-Rehab v3.0", display)
@@ -227,23 +256,22 @@ class ADAPTRehabV3:
 
         kps = pose_result.keypoints_2d
 
-        # Draw connections
-        connections = [
-            (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),  # Arms
-            (11, 23), (12, 24), (23, 24),  # Torso
-            (23, 25), (25, 27), (24, 26), (26, 28),  # Legs
+        # Draw body connections (first 17 joints)
+        body_connections = [
+            (0, 1), (0, 2), (1, 3), (2, 4),  # pelvis to hips
+            (5, 7), (7, 9), (6, 8), (8, 10),  # arms
+            (11, 13), (13, 15), (12, 14), (14, 16),  # legs
         ]
 
-        for i, j in connections:
+        for i, j in body_connections:
             if i < len(kps) and j < len(kps):
                 pt1 = (int(kps[i][0]), int(kps[i][1]))
                 pt2 = (int(kps[j][0]), int(kps[j][1]))
                 cv2.line(display, pt1, pt2, (0, 255, 0), 2)
 
-        # Draw joints
-        for i, kp in enumerate(kps):
-            if i in [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]:
-                cv2.circle(display, (int(kp[0]), int(kp[1])), 4, (0, 0, 255), -1)
+        # Draw body joints
+        for i in range(min(17, len(kps))):
+            cv2.circle(display, (int(kps[i][0]), int(kps[i][1])), 4, (0, 0, 255), -1)
 
     def _draw_angles(self, display: np.ndarray, angles: Dict[str, float]):
         """Draw angle values on frame."""
@@ -289,6 +317,31 @@ class ADAPTRehabV3:
             score_text = f"Score: {last.total_score:.0f}/100"
             cv2.putText(display, score_text, (w - 200, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
 
+    def _generate_feedback(self, pose_result, face_result):
+        """Generate LLM feedback and speak it."""
+        if not self.coach:
+            return
+
+        try:
+            # Build context
+            context = {
+                "angles": pose_result.joint_angles if pose_result else {},
+                "rep_count": self.rep_count,
+                "pain_level": face_result.pain_level if face_result else "NONE",
+                "emotion": face_result.emotion.value if face_result else "neutral",
+            }
+
+            # Generate feedback
+            feedback = self.coach.generate_feedback(context)
+            print(f"\n[Coach] {feedback}")
+
+            # Speak feedback
+            if self.tts:
+                self.tts.synthesize(feedback)
+
+        except Exception as e:
+            print(f"[Coach Error] {e}")
+
     def _score_current_rep(self):
         """Score the current rep from accumulated data."""
         if len(self.angles_history) < 10:
@@ -304,7 +357,7 @@ class ADAPTRehabV3:
             angles=angles,
             timestamps=ts,
             target_angle=target,
-            pose_sequence=self.pose_history[-30:],  # Last 30 frames
+            pose_sequence=self.pose_history[-30:],
         )
 
         self.rep_count += 1
@@ -361,13 +414,19 @@ class ADAPTRehabV3:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="ADAPT-Rehab v3.0")
-    parser.add_argument("--source", type=str, default="webcam", help="Video source (webcam or path)")
-    parser.add_argument("--pose-backend", type=str, default="mediapipe_fallback",
-                        choices=["metrab", "hybrik", "mediapipe_fallback"])
-    parser.add_argument("--pose-model", type=str, default=None, help="Path to pose model")
-    parser.add_argument("--llm-provider", type=str, default="openai", choices=["openai", "anthropic"])
-    parser.add_argument("--llm-api-key", type=str, default=None, help="LLM API key")
-    parser.add_argument("--mode", type=str, default="full", choices=["full", "demo"])
+    parser.add_argument("--source", type=str, default="webcam",
+                        help="Video source (webcam or path)")
+    parser.add_argument("--pose-model", type=str, default=None,
+                        help="Path to pose model")
+    parser.add_argument("--llm-provider", type=str, default="gemini",
+                        choices=["gemini", "openai", "anthropic", "mimo"],
+                        help="LLM provider")
+    parser.add_argument("--llm-api-key", type=str, default=None,
+                        help="LLM API key")
+    parser.add_argument("--llm-model", type=str, default="gemini-2.0-flash",
+                        help="LLM model name")
+    parser.add_argument("--feedback-interval", type=float, default=10.0,
+                        help="Seconds between LLM feedback")
     return parser.parse_args()
 
 
@@ -376,7 +435,7 @@ def main():
 
     # Resolve API key
     if args.llm_api_key is None:
-        args.llm_api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        args.llm_api_key = os.environ.get("MIMO_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
     app = ADAPTRehabV3(args)
     if not app.initialize():

@@ -1,0 +1,19 @@
+{
+  "dataset": "KIMORE",
+  "num_exercises": 5,
+  "total_samples": 378,
+  "classification": {
+    "separation_ratio": 1.201493412232833,
+    "classification_accuracy": 0.591,
+    "intra_class_mean": 84315.69453938607,
+    "inter_class_mean": 101304.75153690833,
+    "num_same_pairs": 225,
+    "num_diff_pairs": 775
+  },
+  "clinical_correlation": {
+    "mean_correlation": 0.04499772328549459,
+    "max_correlation": 0.1344775964924923,
+    "num_features": 24,
+    "num_samples": 378
+  }
+}

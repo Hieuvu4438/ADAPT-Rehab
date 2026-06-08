@@ -1,0 +1,63 @@
+{
+  "full_system": {
+    "mpjpe": 0.4924721509218216,
+    "p_mpjpe": 0.2720609921962023,
+    "fps": 73.15615733100461,
+    "num_videos": 10,
+    "total_frames": 300,
+    "sparc": -33.75
+  },
+  "no_3d_pose": {
+    "mpjpe": 0,
+    "p_mpjpe": 0,
+    "fps": 0,
+    "error": "Unknown estimator: mediapipe_fallback. Available: ['rtmw3d']",
+    "delta_mpjpe": -0.4924721509218216,
+    "delta_p_mpjpe": -0.2720609921962023,
+    "delta_fps": -73.15615733100461
+  },
+  "no_quaternion": {
+    "mpjpe": 0.4924721509218216,
+    "p_mpjpe": 0.2720609921962023,
+    "fps": 60.651856683458995,
+    "num_videos": 10,
+    "total_frames": 300,
+    "sparc": -33.75,
+    "delta_mpjpe": 0.0,
+    "delta_p_mpjpe": 0.0,
+    "delta_fps": -12.504300647545612
+  },
+  "no_sparc": {
+    "mpjpe": 0.4924721509218216,
+    "p_mpjpe": 0.2720609921962023,
+    "fps": 59.93151180684613,
+    "num_videos": 10,
+    "total_frames": 300,
+    "sparc": 0,
+    "delta_mpjpe": 0.0,
+    "delta_p_mpjpe": 0.0,
+    "delta_fps": -13.224645524158475
+  },
+  "no_compensation": {
+    "mpjpe": 0.4924721509218216,
+    "p_mpjpe": 0.2720609921962023,
+    "fps": 66.6065955577068,
+    "num_videos": 10,
+    "total_frames": 300,
+    "sparc": -33.75,
+    "delta_mpjpe": 0.0,
+    "delta_p_mpjpe": 0.0,
+    "delta_fps": -6.54956177329781
+  },
+  "no_llm": {
+    "mpjpe": 0.4924721509218216,
+    "p_mpjpe": 0.2720609921962023,
+    "fps": 66.55729837381877,
+    "num_videos": 10,
+    "total_frames": 300,
+    "sparc": -33.75,
+    "delta_mpjpe": 0.0,
+    "delta_p_mpjpe": 0.0,
+    "delta_fps": -6.59885895718584
+  }
+}
