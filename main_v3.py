@@ -29,6 +29,7 @@ import cv2
 from core.pose3d.base import create_estimator, PoseEstimator3D, Pose3DResult
 from core.kinematics_quaternion import QuaternionKinematics
 from core.smoothness import SmoothnessAnalyzer
+from core.angle_filter import AngleFilter
 
 # Functional modules
 from modules.perception.openface_analyzer import OpenFaceAnalyzer, OpenFaceResult
@@ -85,6 +86,7 @@ class ADAPTRehabV3:
         self.compensation_detector = CompensationDetector()
         self.fatigue_analyzer = FatigueAnalyzer()
         self.scorer = EnhancedScorer()
+        self.angle_filter = AngleFilter(cutoff_hz=6.0, fs=30.0, order=4)
 
         # Intelligence
         self.coach: Optional[RehabCoach] = None
@@ -389,8 +391,9 @@ class ADAPTRehabV3:
             print("Not enough data for scoring (need >= 10 frames)")
             return
 
-        # Use left shoulder angle as primary
-        angles = np.array([a.get("left_shoulder", 0) for a in self.angles_history])
+        # Use left shoulder angle as primary, apply Butterworth filter
+        angles_raw = np.array([a.get("left_shoulder", 0) for a in self.angles_history])
+        angles = self.angle_filter.filter(angles_raw)
         ts = np.array(self.timestamps)
         target = float(np.max(angles)) * 1.1
 

@@ -33,10 +33,10 @@ class TestCompensationDetector:
         poses = []
         for _ in range(n):
             pose = np.zeros((33, 3))
-            pose[11] = [0.3, 0.5, 0]  # Left shoulder
-            pose[12] = [0.7, 0.5, 0]  # Right shoulder (same height)
-            pose[23] = [0.35, 0.7, 0]  # Left hip
-            pose[24] = [0.65, 0.7, 0]  # Right hip (same height)
+            pose[5] = [0.3, 0.5, 0]   # Left shoulder (COCO idx 5)
+            pose[6] = [0.7, 0.5, 0]   # Right shoulder (COCO idx 6, same height)
+            pose[11] = [0.35, 0.7, 0]  # Left hip (COCO idx 11)
+            pose[12] = [0.65, 0.7, 0]  # Right hip (COCO idx 12, same height)
             poses.append(pose)
         return poses
 
@@ -45,10 +45,10 @@ class TestCompensationDetector:
         poses = []
         for _ in range(n):
             pose = np.zeros((33, 3))
-            pose[11] = [0.3, 0.35, 0]  # Left shoulder (much higher)
-            pose[12] = [0.7, 0.65, 0]  # Right shoulder
-            pose[23] = [0.35, 0.7, 0]
-            pose[24] = [0.65, 0.7, 0]
+            pose[5] = [0.3, 0.35, 0]   # Left shoulder (much higher)
+            pose[6] = [0.7, 0.65, 0]   # Right shoulder
+            pose[11] = [0.35, 0.7, 0]
+            pose[12] = [0.65, 0.7, 0]
             poses.append(pose)
         return poses
 
@@ -57,10 +57,10 @@ class TestCompensationDetector:
         poses = []
         for _ in range(n):
             pose = np.zeros((33, 3))
-            pose[11] = [0.4, 0.5, 0]   # Left shoulder
-            pose[12] = [0.6, 0.5, 0]   # Right shoulder
-            pose[23] = [0.2, 0.7, 0]   # Left hip shifted left (asymmetric)
-            pose[24] = [0.6, 0.7, 0]   # Right hip normal
+            pose[5] = [0.4, 0.5, 0]    # Left shoulder
+            pose[6] = [0.6, 0.5, 0]    # Right shoulder
+            pose[11] = [0.2, 0.7, 0]   # Left hip shifted left (asymmetric)
+            pose[12] = [0.6, 0.7, 0]   # Right hip normal
             poses.append(pose)
         return poses
 

@@ -87,11 +87,15 @@ class CompensationDetector:
     TRUNK_THRESHOLD = 15.0     # degrees
     HIP_THRESHOLD = 0.06       # 6% of frame height
 
-    # MediaPipe landmark indices
-    LEFT_SHOULDER = 11
-    RIGHT_SHOULDER = 12
-    LEFT_HIP = 23
-    RIGHT_HIP = 24
+    # RTMW3D COCO-format landmark indices (133 keypoints)
+    # Body joints: 0=nose, 1=L_eye, 2=R_eye, 3=L_ear, 4=R_ear,
+    #   5=L_shoulder, 6=R_shoulder, 7=L_elbow, 8=R_elbow,
+    #   9=L_wrist, 10=R_wrist, 11=L_hip, 12=R_hip,
+    #   13=L_knee, 14=R_knee, 15=L_ankle, 16=R_ankle
+    LEFT_SHOULDER = 5
+    RIGHT_SHOULDER = 6
+    LEFT_HIP = 11
+    RIGHT_HIP = 12
 
     def __init__(self, window_size: int = 30):
         """
