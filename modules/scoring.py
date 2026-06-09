@@ -28,6 +28,7 @@ import numpy as np
 from core.kinematics import JointType
 from core.synchronizer import MotionPhase
 from core.dtw_analysis import DTWResult
+from core.smoothness import SmoothnessAnalyzer, SmoothnessResult
 
 
 class FatigueLevel(Enum):
@@ -42,7 +43,7 @@ class FatigueLevel(Enum):
 class RepScore:
     """
     Điểm của một lần lặp (rep).
-    
+
     Attributes:
         rep_number: Số thứ tự rep.
         rom_score: Điểm ROM (0-100).
@@ -50,6 +51,7 @@ class RepScore:
         flow_score: Điểm mượt mà (0-100).
         symmetry_score: Điểm cân bằng (0-100).
         compensation_score: Điểm bù trừ - cao = ít bù trừ (0-100).
+        smoothness_score: Điểm mượt mà SPARC (0-100).
         total_score: Điểm tổng hợp (0-100).
         jerk_value: Giá trị Jerk.
         duration_ms: Thời gian thực hiện (ms).
@@ -61,13 +63,14 @@ class RepScore:
     stability_score: float = 0.0
     flow_score: float = 0.0
     symmetry_score: float = 0.0
-    compensation_score: float = 100.0  # Mới: điểm cho việc không bù trừ
+    compensation_score: float = 100.0
+    smoothness_score: float = 0.0
     total_score: float = 0.0
     jerk_value: float = 0.0
     duration_ms: int = 0
     notes: str = ""
-    compensation_detected: List[str] = field(default_factory=list)  # Mới
-    
+    compensation_detected: List[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return {
             "rep_number": self.rep_number,
@@ -76,6 +79,7 @@ class RepScore:
             "flow_score": round(self.flow_score, 1),
             "symmetry_score": round(self.symmetry_score, 1),
             "compensation_score": round(self.compensation_score, 1),
+            "smoothness_score": round(self.smoothness_score, 1),
             "total_score": round(self.total_score, 1),
             "jerk_value": round(self.jerk_value, 4),
             "duration_ms": self.duration_ms,
@@ -130,44 +134,49 @@ class SessionReport:
 
 class HealthScorer:
     """
-    Bộ chấm điểm sức khỏe đa chiều.
-    
-    Đánh giá chất lượng tập luyện dựa trên 4 chỉ số:
-    
-    1. ROM Score (Range of Motion):
+    Bộ chấm điểm sức khỏe đa chiều (6 dimensions).
+
+    Đánh giá chất lượng tập luyện dựa trên 6 chỉ số:
+
+    1. ROM Score (Range of Motion) - 25%:
        - So sánh góc đạt được với góc mục tiêu cá nhân hóa
-       - 100% nếu đạt hoặc vượt mục tiêu
-       
-    2. Stability Score:
+       - 40% max angle + 30% hold time + 30% peak quality
+
+    2. Stability Score - 15%:
        - Đo độ rung lắc trong pha HOLD
-       - Dựa trên std deviation của góc khớp
-       
-    3. Flow Score:
-       - Từ kết quả DTW (Giai đoạn 3)
-       - Đánh giá sự mượt mà của chuyển động
-       
-    4. Symmetry Score:
+       - 50% std + 30% oscillation count + 20% drift detection
+
+    3. Flow Score - 20%:
+       - Từ kết quả DTW hoặc ước tính từ velocity
+       - 40% smoothness + 30% continuity + 30% direction consistency
+
+    4. Symmetry Score - 15%:
        - So sánh bên trái và bên phải
-       - Quan trọng cho các bài tập đối xứng
-    
+
+    5. Compensation Score - 15%:
+       - Phát hiện bù trừ: shoulder hiking, trunk lean, hip shift
+
+    6. Smoothness Score - 10%:
+       - SPARC (Spectral Arc Length) + LDLJ metrics
+       - Clinically validated, duration-independent
+
     Example:
         >>> scorer = HealthScorer()
         >>> scorer.start_session("arm_raise")
-        >>> 
         >>> # Mỗi khi hoàn thành 1 rep
-        >>> scorer.record_rep(angles, target, dtw_result)
-        >>> 
+        >>> score = scorer.complete_rep(target_angle=150)
         >>> # Cuối buổi tập
         >>> report = scorer.compute_session_report()
     """
     
-    # Trọng số của từng thành phần - cập nhật có compensation
+    # Trọng số của từng thành phần (6 dimensions - matching RESEARCH_STRATEGY)
     SCORE_WEIGHTS = {
-        "rom": 0.30,           # Giảm để có chỗ cho compensation
-        "stability": 0.20,
-        "flow": 0.20,
-        "symmetry": 0.15,
-        "compensation": 0.15,  # Mới: trừ điểm nếu bù trừ
+        "rom": 0.25,            # Range of Motion
+        "stability": 0.15,      # Độ ổn định trong pha HOLD
+        "flow": 0.20,           # DTW similarity hoặc velocity smoothness
+        "symmetry": 0.15,       # Cân bằng trái-phải
+        "compensation": 0.15,   # Phát hiện bù trừ
+        "smoothness": 0.10,     # SPARC metric (clinically validated)
     }
     
     # Ngưỡng Jerk để phát hiện mệt mỏi
@@ -182,30 +191,33 @@ class HealthScorer:
         self._session_id: Optional[str] = None
         self._start_time: float = 0.0
         self._exercise_name: str = ""
-        
+
         self._rep_scores: List[RepScore] = []
         self._current_rep: int = 0
-        
+
         # Data collection cho rep hiện tại
         self._current_rep_angles: List[float] = []
         self._current_rep_timestamps: List[float] = []
         self._current_rep_phases: List[MotionPhase] = []
-        
+
         # Jerk tracking
         self._jerk_values: List[float] = []
         self._baseline_jerk: Optional[float] = None
-        
+
         # Symmetry tracking
         self._left_angles: List[float] = []
         self._right_angles: List[float] = []
-        
+
         # Pain events
         self._pain_events: List[Dict] = []
-        
-        # Compensation tracking - mới
+
+        # Compensation tracking
         self._shoulder_heights: List[Tuple[float, float]] = []  # (left_y, right_y)
         self._hip_positions: List[Tuple[float, float]] = []  # (left_y, right_y)
         self._torso_tilts: List[float] = []  # Góc nghiêng thân
+
+        # Smoothness analyzer (SPARC + LDLJ)
+        self._smoothness_analyzer = SmoothnessAnalyzer()
     
     def start_session(
         self,
@@ -362,30 +374,35 @@ class HealthScorer:
         # 4. Symmetry Score
         symmetry_score = self._calculate_symmetry_score()
         
-        # 5. Compensation Score - MỚI
+        # 5. Compensation Score
         compensation_score, compensation_issues = self._calculate_compensation_score()
-        
-        # 6. Jerk
+
+        # 6. Smoothness Score (SPARC + LDLJ)
+        smoothness_result = self._smoothness_analyzer.analyze(angles, timestamps)
+        smoothness_score = smoothness_result.smoothness_score
+
+        # 7. Jerk
         jerk = self._calculate_jerk(angles, timestamps)
         self._jerk_values.append(jerk)
-        
+
         # Set baseline jerk từ rep đầu tiên
         if self._baseline_jerk is None and jerk > 0:
             self._baseline_jerk = jerk
-        
-        # Total Score - cập nhật có compensation
+
+        # Total Score (6 dimensions)
         total = (
             self.SCORE_WEIGHTS["rom"] * rom_score +
             self.SCORE_WEIGHTS["stability"] * stability_score +
             self.SCORE_WEIGHTS["flow"] * flow_score +
             self.SCORE_WEIGHTS["symmetry"] * symmetry_score +
-            self.SCORE_WEIGHTS["compensation"] * compensation_score
+            self.SCORE_WEIGHTS["compensation"] * compensation_score +
+            self.SCORE_WEIGHTS["smoothness"] * smoothness_score
         )
-        
+
         # Duration
         duration_ms = int((timestamps[-1] - timestamps[0]) * 1000) if len(timestamps) > 1 else 0
-        
-        # Create score - thêm compensation
+
+        # Create score
         score = RepScore(
             rep_number=self._current_rep,
             rom_score=rom_score,
@@ -393,6 +410,7 @@ class HealthScorer:
             flow_score=flow_score,
             symmetry_score=symmetry_score,
             compensation_score=compensation_score,
+            smoothness_score=smoothness_score,
             total_score=total,
             jerk_value=jerk,
             duration_ms=duration_ms,
@@ -790,7 +808,7 @@ class HealthScorer:
         """
         end_time = time.time()
         
-        # Average scores - cập nhật có compensation
+        # Average scores (6 dimensions)
         if self._rep_scores:
             average_scores = {
                 "rom": np.mean([r.rom_score for r in self._rep_scores]),
@@ -798,6 +816,7 @@ class HealthScorer:
                 "flow": np.mean([r.flow_score for r in self._rep_scores]),
                 "symmetry": np.mean([r.symmetry_score for r in self._rep_scores]),
                 "compensation": np.mean([r.compensation_score for r in self._rep_scores]),
+                "smoothness": np.mean([r.smoothness_score for r in self._rep_scores]),
                 "total": np.mean([r.total_score for r in self._rep_scores]),
             }
         else:

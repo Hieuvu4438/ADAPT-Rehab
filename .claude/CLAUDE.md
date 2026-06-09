@@ -23,18 +23,20 @@ ADAPT-Rehab (internally "MEMOTION") is a **real-time physical rehabilitation sup
 │  └─ User Profile (JSON)                                 │
 ├─────────────────────────────────────────────────────────┤
 │  Perception Layer                                       │
-│  ├─ 3D Pose: MeTRAbs/HybrIK (direct image→3D, metric)  │
-│  ├─ Face: MediaPipe Face Mesh (468 landmarks)           │
-│  ├─ AU Detection: py-feat/JAANet                        │
-│  └─ Emotion: MobileNetV3-Large (fine-tuned)             │
+│  ├─ 3D Pose: RTMW3D (133 keypoints, whole-body)        │
+│  ├─ Face: OpenFace 3.0 (8 AUs + Emotion + Gaze)        │
+│  ├─ AU Detection: OpenFace 3.0 GNN (AFG + FineGrain)   │
+│  └─ State: AU-based formulas (PSPI, PERCLOS, etc.)      │
 ├─────────────────────────────────────────────────────────┤
 │  Analysis Layer                                         │
 │  ├─ Kinematics: Quaternion-based angles                 │
 │  ├─ Smoothness: SPARC + Jerk                            │
 │  ├─ DTW: Weighted + Constrained                         │
 │  ├─ Compensation: Temporal LSTM model                   │
-│  ├─ Fatigue: Multi-indicator (Jerk + ROM + velocity)    │
-│  └─ Pain: Multi-task AU + emotion + pain regression     │
+│  ├─ Fatigue: PERCLOS + Blink + Yawn + Velocity Loss    │
+│  ├─ Pain: PSPI (Prkachin-Solomon, 2008) via AU        │
+│  ├─ Boredom: Engagement Index (Whitehill, 2014)        │
+│  └─ Body: RTMW3D behavioral (ROM decline, asymmetry)   │
 ├─────────────────────────────────────────────────────────┤
 │  Intelligence Layer                                     │
 │  ├─ LLM: GPT-4o/Claude API (not self-hosted)           │
@@ -62,15 +64,18 @@ ADAPT-Rehab (internally "MEMOTION") is a **real-time physical rehabilitation sup
 | Component | Technology | Notes |
 |-----------|-----------|-------|
 | Language | Python 3.10+ | Type hints, dataclasses |
-| 3D Pose | MeTRAbs / HybrIK | Direct image→3D, metric-scale |
-| Face Detection | MediaPipe Face Mesh | 468 landmarks, fast |
-| AU Detection | py-feat (JAANet) | Open source, Python-native |
-| Emotion | MobileNetV3-Large | Fine-tuned on FER benchmarks |
+| 3D Pose | RTMW3D (MMPose) | 133 keypoints, whole-body, real-time |
+| Face Detection | OpenFace 3.0 (RetinaFace) | Better than MediaPipe for AU |
+| AU Detection | OpenFace 3.0 (GNN) | 8 AUs: AU1,2,4,6,9,12,25,26 |
+| Emotion | OpenFace 3.0 (EfficientNet-B0) | 8 classes (AffectNet) |
+| Pain Detection | PSPI formula (Prkachin-Solomon, 2008) | AU4 + max(AU6,7) + max(AU9,10) + AU43 |
+| Fatigue Detection | PERCLOS + Blink + Yawn (Wierwille, 1994) | Multi-indicator composite |
+| Boredom Detection | Engagement Index (Whitehill, 2014) | AU12 - AU1 - AU15 |
+| Body Behavior | RTMW3D kinematics | Velocity loss, ROM decline, asymmetry |
 | ASR | Whisper large-v3 | Open source, multilingual |
 | TTS | Edge-TTS | Vietnamese voice, cloud-based |
 | LLM | GPT-4o / Claude API | Via API, not self-hosted |
-| RAG | LangChain | Clinical knowledge base |
-| Numerics | NumPy, SciPy | Procrustes, signal processing |
+| Numerics | NumPy, SciPy | Butterworth filter, FFT, SPARC |
 | DTW | fastdtw | Weighted DTW implementation |
 | Visualization | OpenCV, PIL | Vietnamese text rendering |
 | Testing | pytest, mypy | Type checking, unit tests |
@@ -113,7 +118,7 @@ ADAPT-Rehab/
 │   ├── __init__.py
 │   ├── logger.py              # Session logging
 │   └── visualization.py       # OpenCV/PIL drawing helpers
-├── perception/                # NEW: Perception layer
+├── perception/                # Perception layer
 │   ├── __init__.py
 │   ├── pose3d/                # Direct 3D pose estimation
 │   │   ├── __init__.py
@@ -121,14 +126,18 @@ ADAPT-Rehab/
 │   │   ├── metrab.py          # MeTRAbs implementation
 │   │   ├── hybrik.py          # HybrIK implementation
 │   │   └── mediapipe_fallback.py  # Fallback for CPU-only
-│   ├── face/                  # Face analysis
-│   │   ├── __init__.py
-│   │   ├── face_detector.py   # MediaPipe face detection
-│   │   ├── au_detector.py     # Action Unit detection (py-feat)
-│   │   └── emotion_classifier.py  # Emotion classification
-│   └── fusion/                # Multi-modal fusion
-│       ├── __init__.py
-│       └── cross_attention.py # Cross-attention fusion
+│   ├── face_detector.py       # MediaPipe face detection (468 landmarks)
+│   ├── openface_analyzer.py   # OpenFace 3.0 wrapper (AU + Emotion + Gaze)
+│   └── facial_state_detector.py  # AU-based state detection (PSPI, PERCLOS, etc.)
+├── analysis/                  # Analysis layer
+│   ├── __init__.py
+│   ├── kinematics.py          # Joint angle computation
+│   ├── kinematics_quaternion.py  # Quaternion-based angles
+│   ├── smoothness.py          # SPARC + LDLJ metrics
+│   ├── compensation.py        # Compensatory movement detection
+│   ├── fatigue.py             # Multi-indicator fatigue
+│   ├── scoring_v2.py          # Enhanced scoring system
+│   └── body_state_detector.py # RTMW3D behavioral state detection
 ├── intelligence/              # NEW: Intelligence layer
 │   ├── __init__.py
 │   ├── voice/                 # Voice interaction

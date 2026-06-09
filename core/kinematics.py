@@ -24,6 +24,7 @@ from enum import Enum
 import numpy as np
 
 from .data_types import Point3D, LandmarkSet, PoseLandmarkIndex
+from .kinematics_quaternion import QuaternionKinematics
 
 
 class JointType(Enum):
@@ -149,85 +150,79 @@ def calculate_angle(
     point_a: Union[np.ndarray, Point3D, Tuple[float, float, float]],
     point_b: Union[np.ndarray, Point3D, Tuple[float, float, float]],
     point_c: Union[np.ndarray, Point3D, Tuple[float, float, float]],
-    use_3d: bool = True
+    use_3d: bool = True,
+    method: str = "quaternion"
 ) -> float:
     """
     Tính góc giữa 3 điểm trong không gian, với B là đỉnh góc.
-    
-    Công thức toán học:
-        1. Tạo vector BA = A - B và BC = C - B
-        2. Tính dot product: BA · BC = |BA| × |BC| × cos(θ)
-        3. Suy ra: θ = arccos((BA · BC) / (|BA| × |BC|))
-    
-    Ý nghĩa nhân văn:
-        Góc khớp là thước đo quan trọng nhất trong phục hồi chức năng.
-        Việc tính chính xác góc giúp:
-        - Đánh giá tiến triển của bệnh nhân
-        - Đặt mục tiêu tập luyện phù hợp
-        - Phát hiện sớm các vấn đề về vận động
-    
+
+    Hỗ trợ 2 phương pháp:
+    - quaternion (mặc định): Sử dụng quaternion rotation, không gimbal lock,
+      chính xác hơn ở góc 90°. Tham khảo Aurand et al. (2024), IEEE.
+    - dot_product: Phương pháp cổ điển nhanh hơn nhưng có singularity.
+
+    Công thức toán học (quaternion):
+        1. v1 = normalize(A - B), v2 = normalize(C - B)
+        2. dot = v1 · v2, cross = v1 × v2
+        3. q = [cos(θ/2), sin(θ/2) * normalize(cross)]
+        4. θ = 2 × arccos(q.w)
+
+    Công thức toán học (dot_product):
+        1. BA = A - B, BC = C - B
+        2. cos(θ) = (BA · BC) / (|BA| × |BC|)
+        3. θ = arccos(cos(θ))
+
     Args:
         point_a: Điểm đầu (proximal).
         point_b: Điểm đỉnh góc (vertex) - khớp cần đo.
         point_c: Điểm cuối (distal).
         use_3d: Nếu True, sử dụng cả 3 tọa độ (x, y, z).
-                Nếu False, chỉ dùng (x, y) - hữu ích khi z không đáng tin cậy.
-    
+                Nếu False, chỉ dùng (x, y).
+        method: "quaternion" hoặc "dot_product".
+
     Returns:
         float: Góc tính bằng độ (degrees), trong khoảng [0, 180].
-        
+
     Raises:
         ValueError: Nếu các điểm trùng nhau (không thể tính góc).
-        
+
     Example:
-        >>> # Góc vuông 90 độ
         >>> a = np.array([1, 0, 0])
-        >>> b = np.array([0, 0, 0])  # Đỉnh góc
+        >>> b = np.array([0, 0, 0])
         >>> c = np.array([0, 1, 0])
         >>> angle = calculate_angle(a, b, c)
         >>> print(f"{angle:.1f}")  # 90.0
     """
-    # Chuyển đổi về numpy array
     a = _to_numpy(point_a, use_3d)
     b = _to_numpy(point_b, use_3d)
     c = _to_numpy(point_c, use_3d)
-    
-    # Tạo vector từ đỉnh góc B
-    # Vector BA: từ B đến A (hướng về proximal)
-    # Vector BC: từ B đến C (hướng về distal)
-    vector_ba = a - b
-    vector_bc = c - b
-    
-    # Tính độ dài (norm) của các vector
-    norm_ba = np.linalg.norm(vector_ba)
-    norm_bc = np.linalg.norm(vector_bc)
-    
-    # Kiểm tra trường hợp đặc biệt: điểm trùng nhau
-    if norm_ba < 1e-10 or norm_bc < 1e-10:
-        raise ValueError(
-            "Không thể tính góc: các điểm quá gần nhau hoặc trùng nhau. "
-            "Điều này có thể xảy ra khi MediaPipe không detect chính xác."
-        )
-    
-    # Tính dot product
-    # BA · BC = |BA| × |BC| × cos(θ)
-    dot_product = np.dot(vector_ba, vector_bc)
-    
-    # Tính cosine của góc
-    # cos(θ) = (BA · BC) / (|BA| × |BC|)
-    cos_angle = dot_product / (norm_ba * norm_bc)
-    
-    # Clamp giá trị về [-1, 1] để tránh lỗi số học
-    # (do sai số floating point, cos có thể > 1 hoặc < -1 một chút)
-    cos_angle = np.clip(cos_angle, -1.0, 1.0)
-    
-    # Tính góc bằng arccos
-    angle_radians = np.arccos(cos_angle)
-    
-    # Chuyển từ radians sang degrees
-    angle_degrees = np.degrees(angle_radians)
-    
-    return float(angle_degrees)
+
+    if method == "quaternion":
+        angle = QuaternionKinematics.compute_angle(a, b, c)
+        if angle == 0.0:
+            # Check if points are actually distinct (quaternion returns 0 for parallel vectors too)
+            # Use dot-product to distinguish degenerate case from 0-degree angle
+            v1, v2 = a - b, c - b
+            if np.linalg.norm(v1) < 1e-10 or np.linalg.norm(v2) < 1e-10:
+                raise ValueError(
+                    "Không thể tính góc: các điểm quá gần nhau hoặc trùng nhau."
+                )
+        return angle
+    else:
+        # Dot-product fallback
+        vector_ba = a - b
+        vector_bc = c - b
+        norm_ba = np.linalg.norm(vector_ba)
+        norm_bc = np.linalg.norm(vector_bc)
+
+        if norm_ba < 1e-10 or norm_bc < 1e-10:
+            raise ValueError(
+                "Không thể tính góc: các điểm quá gần nhau hoặc trùng nhau."
+            )
+
+        cos_angle = np.dot(vector_ba, vector_bc) / (norm_ba * norm_bc)
+        cos_angle = np.clip(cos_angle, -1.0, 1.0)
+        return float(np.degrees(np.arccos(cos_angle)))
 
 
 def calculate_angle_safe(
@@ -235,19 +230,21 @@ def calculate_angle_safe(
     point_b: Union[np.ndarray, Point3D, Tuple[float, float, float]],
     point_c: Union[np.ndarray, Point3D, Tuple[float, float, float]],
     use_3d: bool = True,
-    default_angle: float = 0.0
+    default_angle: float = 0.0,
+    method: str = "quaternion"
 ) -> float:
     """
     Phiên bản an toàn của calculate_angle, trả về default nếu lỗi.
-    
+
     Hữu ích khi xử lý real-time và cần tránh crash do dữ liệu xấu.
     Xử lý cả trường hợp NaN/Inf trong input để tránh lan truyền lỗi.
-    
+
     Args:
         point_a, point_b, point_c: 3 điểm.
         use_3d: Sử dụng 3D hay 2D.
         default_angle: Giá trị trả về nếu không tính được.
-        
+        method: "quaternion" hoặc "dot_product".
+
     Returns:
         float: Góc hoặc default_angle.
     """
@@ -260,18 +257,18 @@ def calculate_angle_safe(
         else:
             arr = np.asarray(point, dtype=np.float32)
         return bool(np.any(np.isnan(arr)) or np.any(np.isinf(arr)))
-    
+
     try:
         # Validate all inputs for NaN/Inf
         if _has_invalid_values(point_a) or _has_invalid_values(point_b) or _has_invalid_values(point_c):
             return default_angle
-        
-        result = calculate_angle(point_a, point_b, point_c, use_3d)
-        
+
+        result = calculate_angle(point_a, point_b, point_c, use_3d, method=method)
+
         # Validate output as well
         if np.isnan(result) or np.isinf(result):
             return default_angle
-            
+
         return result
     except (ValueError, TypeError, ZeroDivisionError):
         return default_angle
@@ -280,19 +277,21 @@ def calculate_angle_safe(
 def calculate_joint_angle(
     landmarks: Union[np.ndarray, LandmarkSet],
     joint_type: JointType,
-    use_3d: bool = True
+    use_3d: bool = True,
+    method: str = "quaternion"
 ) -> float:
     """
     Tính góc của một khớp cụ thể từ pose landmarks.
-    
+
     Args:
         landmarks: Ma trận landmarks (N, 3) hoặc LandmarkSet.
         joint_type: Loại khớp cần tính (từ JointType enum).
         use_3d: Sử dụng tọa độ 3D hay 2D.
-        
+        method: "quaternion" hoặc "dot_product".
+
     Returns:
         float: Góc của khớp (degrees).
-        
+
     Example:
         >>> # Tính góc khuỷu tay trái
         >>> angle = calculate_joint_angle(landmarks, JointType.LEFT_ELBOW)
@@ -300,48 +299,50 @@ def calculate_joint_angle(
     # Chuyển đổi LandmarkSet sang numpy nếu cần
     if isinstance(landmarks, LandmarkSet):
         landmarks = landmarks.to_numpy()
-    
+
     # Lấy định nghĩa khớp
     joint_def = JOINT_DEFINITIONS.get(joint_type)
     if joint_def is None:
         raise ValueError(f"Joint type {joint_type} not defined")
-    
+
     # Trích xuất 3 điểm
     point_a = landmarks[joint_def.proximal]
     point_b = landmarks[joint_def.vertex]
     point_c = landmarks[joint_def.distal]
-    
-    return calculate_angle(point_a, point_b, point_c, use_3d)
+
+    return calculate_angle(point_a, point_b, point_c, use_3d, method=method)
 
 
 def calculate_all_joint_angles(
     landmarks: Union[np.ndarray, LandmarkSet],
     use_3d: bool = True,
-    joints: Optional[List[JointType]] = None
+    joints: Optional[List[JointType]] = None,
+    method: str = "quaternion"
 ) -> Dict[JointType, float]:
     """
     Tính góc của tất cả các khớp (hoặc một subset).
-    
+
     Args:
         landmarks: Pose landmarks.
         use_3d: Sử dụng 3D hay 2D.
         joints: Danh sách khớp cần tính. Nếu None, tính tất cả.
-        
+        method: "quaternion" hoặc "dot_product".
+
     Returns:
         Dict[JointType, float]: Mapping từ loại khớp đến góc.
     """
     if joints is None:
         joints = list(JOINT_DEFINITIONS.keys())
-    
+
     results = {}
     for joint_type in joints:
         try:
-            angle = calculate_joint_angle(landmarks, joint_type, use_3d)
+            angle = calculate_joint_angle(landmarks, joint_type, use_3d, method=method)
             results[joint_type] = angle
         except (ValueError, IndexError):
             # Skip joints that can't be calculated
             pass
-    
+
     return results
 
 

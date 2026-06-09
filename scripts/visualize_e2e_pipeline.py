@@ -23,7 +23,9 @@ from core.kinematics_quaternion import QuaternionKinematics
 from core.smoothness import SmoothnessAnalyzer
 from core.dtw_constrained import constrained_dtw
 
-from modules.perception.face_analyzer import FaceAnalyzer
+from modules.perception.openface_analyzer import OpenFaceAnalyzer
+from modules.perception.facial_state_detector import FacialState
+from modules.analysis.body_state_detector import BodyStateDetector
 from modules.compensation import CompensationDetector
 from modules.scoring_v2 import EnhancedScorer
 from modules.intelligence.coach.rehab_coach import RehabCoach
@@ -199,7 +201,7 @@ def draw_skeleton(frame, kps2d, kps_conf, active_compensations=True):
 
 
 def draw_face_landmarks(frame, landmarks):
-    """Draws face landmarks from FaceAnalyzer as tiny dots on the face."""
+    """Draws face landmarks from OpenFace analyzer as tiny dots on the face."""
     if landmarks is None:
         return
     h, w, _ = frame.shape
@@ -230,9 +232,9 @@ def main():
         print("[ERROR] Cannot initialize RTMW3D model.")
         return
 
-    print("[Perception] Loading MediaPipe FaceAnalyzer...")
-    face_analyzer = FaceAnalyzer()
-    face_init = face_analyzer.initialize()
+    print("[Perception] Loading OpenFace 3.0 Analyzer...")
+    openface_analyzer = OpenFaceAnalyzer(device="cpu")
+    face_init = openface_analyzer.initialize()
     
     # Open input video
     cap = cv2.VideoCapture(video_path)
@@ -265,22 +267,25 @@ def main():
         
         # 1. Pipeline Inference
         pose_res = pose_estimator.estimate(frame, ts_ms)
-        face_res = face_analyzer.analyze(frame, ts_ms) if face_init else None
-        
+        face_res = openface_analyzer.analyze(frame, ts_ms) if face_init else None
+
         # 2. Gather metrics
         metrics = {
             "emotion": "neutral",
-            "emotion_conf": 0.978,
-            "pain_level": "NONE",
+            "emotion_conf": 0.0,
+            "facial_state": "normal",
             "pain_score": 0.0,
+            "fatigue_score": 0.0,
             "angles": {}
         }
         
         if face_res and face_res.is_valid:
-            metrics["emotion"] = face_res.emotion.value
+            metrics["emotion"] = face_res.emotion_label
             metrics["emotion_conf"] = face_res.emotion_confidence
-            metrics["pain_level"] = face_res.pain_level
-            metrics["pain_score"] = face_res.pain_score
+            if face_res.state_result:
+                metrics["facial_state"] = face_res.state_result.state.value
+                metrics["pain_score"] = face_res.state_result.pain_score
+                metrics["fatigue_score"] = face_res.state_result.fatigue_score
             
         if pose_res.is_valid:
             metrics["angles"] = pose_res.joint_angles_quaternion
@@ -310,7 +315,7 @@ def main():
     writer.release()
     pose_estimator.close()
     if face_init:
-        face_analyzer.close()
+        openface_analyzer.close()
         
     elapsed = time.time() - start_time
     print(f"\n[Success] Video rendering finished. Output saved to: {output_video_path}")

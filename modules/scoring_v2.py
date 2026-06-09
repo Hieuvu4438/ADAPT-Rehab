@@ -241,12 +241,48 @@ class EnhancedScorer:
         )
 
     def _compute_rom(self, angles: np.ndarray, target: float) -> float:
+        """ROM Score with 3 sub-components (matching v1 logic).
+
+        40% max angle achievement + 30% hold time near target + 30% peak quality.
+        """
         if target <= 0:
             return 100.0
+        if len(angles) < 5:
+            return 0.0
+
+        # 1. Max angle score (40%)
         max_achieved = float(np.max(angles))
-        return min(100.0, (max_achieved / target) * 100)
+        max_score = min(100.0, (max_achieved / target) * 100)
+
+        # 2. Hold time score — frames above 80% of target (30%)
+        threshold = target * 0.8
+        frames_above = int(np.sum(angles >= threshold))
+        min_frames_required = max(3, len(angles) * 0.1)
+        hold_ratio = min(1.0, frames_above / min_frames_required)
+        hold_score = hold_ratio * 100
+
+        # 3. Peak quality score — stability around the peak (30%)
+        peak_idx = int(np.argmax(angles))
+        window = max(3, len(angles) // 10)
+        start_idx = max(0, peak_idx - window)
+        end_idx = min(len(angles), peak_idx + window + 1)
+        peak_region = angles[start_idx:end_idx]
+
+        if len(peak_region) >= 3:
+            peak_std = float(np.std(peak_region))
+            peak_quality_score = max(0.0, 100.0 - peak_std * 5)
+        else:
+            peak_quality_score = 50.0
+
+        return min(100.0, max(0.0,
+            0.40 * max_score + 0.30 * hold_score + 0.30 * peak_quality_score
+        ))
 
     def _compute_stability(self, angles: np.ndarray, hold_indices: Optional[np.ndarray] = None) -> float:
+        """Stability Score with 3 sub-components (matching v1 logic).
+
+        50% std + 30% oscillation count + 20% drift detection.
+        """
         if hold_indices is not None and len(hold_indices) > 0:
             hold_angles = angles[hold_indices]
         else:
@@ -258,10 +294,41 @@ class EnhancedScorer:
         if len(hold_angles) < 3:
             return 80.0
 
-        std = float(np.std(hold_angles))
-        return max(0, min(100, 100 - std * 5))
+        hold_arr = np.asarray(hold_angles, dtype=np.float64)
+
+        # 1. Standard deviation score (50%)
+        std = float(np.std(hold_arr))
+        std_score = max(0.0, 100.0 - std * 10)
+
+        # 2. Oscillation count — frames exceeding 3° from HOLD mean (30%)
+        mean_angle = float(np.mean(hold_arr))
+        oscillation_threshold = 3.0
+        deviations = np.abs(hold_arr - mean_angle)
+        crossings = int(np.sum(deviations > oscillation_threshold))
+        max_allowed = max(1, len(hold_arr) * 0.2)
+        oscillation_ratio = min(1.0, crossings / max_allowed)
+        oscillation_score = (1 - oscillation_ratio) * 100
+
+        # 3. Drift score — angle drop between first and second half (20%)
+        if len(hold_arr) >= 3:
+            mid = len(hold_arr) // 2
+            first_half_mean = float(np.mean(hold_arr[:mid]))
+            second_half_mean = float(np.mean(hold_arr[mid:]))
+            drift = first_half_mean - second_half_mean  # positive = angle dropping
+            drift_penalty = min(1.0, max(0.0, drift) / 5.0)
+            drift_score = (1 - drift_penalty) * 100
+        else:
+            drift_score = 100.0
+
+        return min(100.0, max(0.0,
+            0.50 * std_score + 0.30 * oscillation_score + 0.20 * drift_score
+        ))
 
     def _compute_flow(self, angles: np.ndarray, timestamps: np.ndarray) -> float:
+        """Flow Score with 3 sub-components (matching v1 logic).
+
+        40% velocity smoothness + 30% continuity + 30% direction consistency.
+        """
         if len(angles) < 5:
             return 70.0
 
@@ -272,10 +339,30 @@ class EnhancedScorer:
         if len(velocity) < 3:
             return 70.0
 
+        # 1. Velocity smoothness — acceleration std (40%)
         acceleration = np.diff(velocity) / dt[:-1]
         accel_std = float(np.std(acceleration))
+        smoothness_score = max(0.0, 100.0 - accel_std * 0.2)
 
-        return max(0, min(100, 100 - accel_std * 0.1))
+        # 2. Continuity — no sudden jumps > 15°/frame (30%)
+        angle_diffs = np.abs(np.diff(angles))
+        max_allowed_jump = 15.0
+        jumps = int(np.sum(angle_diffs > max_allowed_jump))
+        jump_ratio = jumps / len(angle_diffs) if len(angle_diffs) > 0 else 0
+        continuity_score = (1 - min(1.0, jump_ratio * 5)) * 100
+
+        # 3. Direction consistency — sign-change ratio in velocity (30%)
+        if len(velocity) >= 5:
+            sign_changes = int(np.sum(np.abs(np.diff(np.sign(velocity))) > 0))
+            max_changes = len(velocity) * 0.3
+            direction_ratio = min(1.0, sign_changes / max(1, max_changes))
+            direction_score = (1 - direction_ratio) * 100
+        else:
+            direction_score = 70.0
+
+        return min(100.0, max(0.0,
+            0.40 * smoothness_score + 0.30 * continuity_score + 0.30 * direction_score
+        ))
 
     def _compute_symmetry(self, left: Optional[np.ndarray], right: Optional[np.ndarray]) -> float:
         if left is None or right is None:

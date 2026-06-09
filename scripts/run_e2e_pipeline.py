@@ -25,9 +25,9 @@ from core.smoothness import SmoothnessAnalyzer
 from core.dtw_constrained import constrained_dtw
 
 # Module imports
-from modules.perception.face_analyzer import FaceAnalyzer
-from modules.perception.au_detector import ActionUnitDetector
-from modules.perception.emotion_classifier import EmotionClassifier
+from modules.perception.openface_analyzer import OpenFaceAnalyzer
+from modules.perception.facial_state_detector import FacialState
+from modules.analysis.body_state_detector import BodyStateDetector
 from modules.compensation import CompensationDetector
 from modules.fatigue import FatigueAnalyzer
 from modules.scoring_v2 import EnhancedScorer
@@ -95,11 +95,12 @@ def run_pipeline(video_path: str, output_dir: str):
     logger.info(f"     - Initialization Status: {'SUCCESS' if pose_init else 'FAILED (Fallback to MediaPipe)'}")
 
     logger.info("  2. Face & Emotion Analysis Model:")
-    logger.info("     - Models: MediaPipe Face Mesh + Py-Feat/MobileNetV3 fallback")
-    logger.info("     - Target AUs: AU4, AU6, AU7, AU9, AU10, AU43 (PSPI scale)")
-    logger.info("     - Emotions: 7 classes (Happiness, Sadness, Anger, Neutral, etc.)")
-    face_analyzer = FaceAnalyzer()
-    face_init = face_analyzer.initialize()
+    logger.info("     - Models: OpenFace 3.0 (AU + Emotion + Gaze)")
+    logger.info("     - Target AUs: AU1, AU2, AU4, AU6, AU9, AU12, AU25, AU26 (8 AUs)")
+    logger.info("     - State Detection: PSPI (pain), PERCLOS (fatigue), Engagement (boredom)")
+    logger.info("     - Emotions: 8 classes (AffectNet: neutral, happy, sad, surprise, fear, disgust, anger, contempt)")
+    openface_analyzer = OpenFaceAnalyzer(device="cpu")
+    face_init = openface_analyzer.initialize()
     logger.info(f"     - Initialization Status: {'SUCCESS' if face_init else 'FAILED'}")
 
     # -------------------------------------------------------------------------
@@ -157,7 +158,7 @@ def run_pipeline(video_path: str, output_dir: str):
         
         # 1. Perception
         pose_res = pose_estimator.estimate(frame, ts_ms)
-        face_res = face_analyzer.analyze(frame, ts_ms) if face_init else None
+        face_res = openface_analyzer.analyze(frame, ts_ms) if face_init else None
         
         # 2. Accumulate history
         if pose_res.is_valid and pose_res.keypoints_3d is not None:
@@ -177,7 +178,11 @@ def run_pipeline(video_path: str, output_dir: str):
                 logger.info(f"    - Pose 3D: NOT DETECTED (Reason: {pose_res.error_message})")
                 
             if face_res and face_res.is_valid:
-                logger.info(f"    - Face: Emotion={face_res.emotion.value} (conf={face_res.emotion_confidence:.1%}), Pain={face_res.pain_level} (PSPI={face_res.pain_score:.1f})")
+                state_info = ""
+                if face_res.state_result:
+                    sr = face_res.state_result
+                    state_info = f", State={sr.state.value} (Pain={sr.pain_score:.2f}, Fatigue={sr.fatigue_score:.2f})"
+                logger.info(f"    - Face: Emotion={face_res.emotion_label} (conf={face_res.emotion_confidence:.1%}){state_info}")
 
     cap.release()
     pose_estimator.close()

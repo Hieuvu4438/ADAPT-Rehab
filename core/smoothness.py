@@ -45,9 +45,9 @@ class SmoothnessAnalyzer:
             nvp = self._nvp(velocity)
 
             # SPARC normalization: use empirical range from Balasubramanian 2015
-            # Typical rehabilitation movements: SPARC in [-3, 0]
-            # Map: -3 → 100 (very smooth), 0 → 0 (very jerky)
-            sparc_score = max(0, min(100, (sparc + 3.0) / 3.0 * 100))
+            # Typical rehabilitation movements: SPARC in [-2, 0] (clipped range)
+            # Map: -2 → 100 (very smooth), 0 → 0 (very jerky)
+            sparc_score = max(0, min(100, (sparc + 2.0) / 2.0 * 100))
             # LDLJ normalization: typical range is [-10, 0]
             ldjl_score = max(0, min(100, (ldjl + 10) / 10 * 100))
             score = 0.6 * sparc_score + 0.4 * ldjl_score
@@ -62,6 +62,8 @@ class SmoothnessAnalyzer:
         Returns a value in [-2, 0] where MORE NEGATIVE = SMOOTHER.
         - -2.0: very smooth (single bell-shaped velocity profile)
         - 0.0: very jerky (impulsive movement)
+
+        Normalization: maps [-2, 0] → [100, 0] for scoring.
         """
         n = len(velocity)
         freq = np.fft.rfftfreq(n, d=1.0 / fs)
@@ -85,7 +87,8 @@ class SmoothnessAnalyzer:
         freq_range = f_max - f_0
 
         if freq_range < 1e-10:
-            return 0.0
+            # Single frequency component → maximally smooth movement
+            return -2.0
 
         # Compute arc length of the normalized magnitude spectrum
         # Only up to the cutoff frequency

@@ -52,6 +52,8 @@ from .kinematics import (
     is_angle_in_normal_range,
 )
 
+from .kinematics_quaternion import QuaternionKinematics
+
 from .synchronizer import (
     MotionPhase,
     SyncStatus,
@@ -103,6 +105,7 @@ __all__ = [
     "calculate_all_joint_angles",
     "compute_angle_velocity",
     "is_angle_in_normal_range",
+    "QuaternionKinematics",
     # Synchronizer
     "MotionPhase",
     "SyncStatus",

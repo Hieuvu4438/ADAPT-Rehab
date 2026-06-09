@@ -31,7 +31,9 @@ from core.kinematics_quaternion import QuaternionKinematics
 from core.smoothness import SmoothnessAnalyzer
 
 # Functional modules
-from modules.perception.face_analyzer import FaceAnalyzer, FaceAnalysisResult
+from modules.perception.openface_analyzer import OpenFaceAnalyzer, OpenFaceResult
+from modules.perception.facial_state_detector import FacialState, FacialStateResult
+from modules.analysis.body_state_detector import BodyStateDetector, BodyState
 from modules.compensation import CompensationDetector
 from modules.fatigue import FatigueAnalyzer, FatigueLevel
 from modules.scoring_v2 import EnhancedScorer, RepScoreV2
@@ -74,7 +76,8 @@ class ADAPTRehabV3:
 
         # Perception
         self.pose_estimator: Optional[PoseEstimator3D] = None
-        self.face_analyzer: Optional[FaceAnalyzer] = None
+        self.openface_analyzer: Optional[OpenFaceAnalyzer] = None
+        self.body_state_detector: Optional[BodyStateDetector] = None
 
         # Analysis
         self.quaternion_kinematics = QuaternionKinematics()
@@ -111,17 +114,22 @@ class ADAPTRehabV3:
             return False
         print(f"  ✓ Pose: {self.pose_estimator.model_name}")
 
-        # 2. Face Analyzer
-        print("[2/4] Initializing Face Analyzer...")
-        self.face_analyzer = FaceAnalyzer()
-        if self.face_analyzer.initialize():
-            print("  ✓ Face: MediaPipe Face Mesh + AU + Emotion")
+        # 2. OpenFace 3.0 Analyzer (AU + Emotion + Gaze + State Detection)
+        print("[2/5] Initializing OpenFace 3.0 Analyzer...")
+        self.openface_analyzer = OpenFaceAnalyzer(device="cuda" if self.args.use_gpu else "cpu")
+        if self.openface_analyzer.initialize():
+            print("  ✓ Face: OpenFace 3.0 (AU + Emotion + Gaze)")
         else:
             print("  ⚠ Face detection unavailable")
-            self.face_analyzer = None
+            self.openface_analyzer = None
 
-        # 3. TTS
-        print("[3/4] Initializing TTS...")
+        # 3. Body State Detector (RTMW3D behavioral analysis)
+        print("[3/5] Initializing Body State Detector...")
+        self.body_state_detector = BodyStateDetector(fps=30.0)
+        print("  ✓ Body: RTMW3D behavioral state detection")
+
+        # 4. TTS
+        print("[4/5] Initializing TTS...")
         try:
             self.tts = TextToSpeech()
             print("  ✓ TTS: Edge-TTS (Vietnamese)")
@@ -129,8 +137,8 @@ class ADAPTRehabV3:
             print(f"  ⚠ TTS unavailable: {e}")
             self.tts = None
 
-        # 4. LLM Coach
-        print("[4/4] Initializing LLM Coach...")
+        # 5. LLM Coach
+        print("[5/5] Initializing LLM Coach...")
         if self.args.llm_api_key:
             try:
                 llm = LLMClient(
@@ -152,7 +160,8 @@ class ADAPTRehabV3:
 
         print("\n✓ All components initialized")
         print(f"  Pose: {self.pose_estimator.model_name}")
-        print(f"  Face: {'Enabled' if self.face_analyzer else 'Disabled'}")
+        print(f"  Face: {'OpenFace 3.0' if self.openface_analyzer else 'Disabled'}")
+        print(f"  Body State: {'Enabled' if self.body_state_detector else 'Disabled'}")
         print(f"  LLM: {self.args.llm_model if self.coach else 'Disabled'}")
         print(f"  TTS: {'Enabled' if self.tts else 'Disabled'}")
         print("=" * 60)
@@ -238,11 +247,18 @@ class ADAPTRehabV3:
             # Draw angles
             self._draw_angles(display, pose_result.joint_angles)
 
-        # === Face Analysis ===
-        if self.face_analyzer:
-            face_result = self.face_analyzer.analyze(frame, timestamp_ms)
+        # === Face Analysis (OpenFace 3.0) ===
+        if self.openface_analyzer:
+            face_result = self.openface_analyzer.analyze(frame, timestamp_ms)
             if face_result.is_valid:
                 self._draw_face_info(display, face_result)
+
+        # === Body State Detection (RTMW3D) ===
+        body_state_result = None
+        if self.body_state_detector and pose_result and pose_result.is_valid and pose_result.keypoints_3d is not None:
+            body_state_result = self.body_state_detector.process_frame(
+                pose_result.keypoints_3d, timestamp_s
+            )
 
         # === Draw HUD ===
         self._draw_hud(display, pose_result, face_result)
@@ -281,8 +297,8 @@ class ADAPTRehabV3:
             cv2.putText(display, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             y += 20
 
-    def _draw_face_info(self, display: np.ndarray, face_result: FaceAnalysisResult):
-        """Draw face analysis results on frame."""
+    def _draw_face_info(self, display: np.ndarray, face_result: OpenFaceResult):
+        """Draw face analysis results on frame (OpenFace 3.0)."""
         h, w = display.shape[:2]
 
         # Draw face bbox
@@ -290,14 +306,37 @@ class ADAPTRehabV3:
             x1, y1, x2, y2 = face_result.face_bbox.astype(int)
             cv2.rectangle(display, (x1, y1), (x2, y2), (255, 0, 0), 2)
 
-        # Draw emotion and pain
-        text_y = h - 80
-        emotion_text = f"Emotion: {face_result.emotion.value} ({face_result.emotion_confidence:.1%})"
+        # Draw emotion
+        text_y = h - 120
+        emotion_text = f"Emotion: {face_result.emotion_label} ({face_result.emotion_confidence:.1%})"
         cv2.putText(display, emotion_text, (10, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
-        pain_text = f"Pain: {face_result.pain_level} (PSPI={face_result.pain_score:.1f})"
-        color = (0, 255, 0) if face_result.pain_level == "NONE" else (0, 0, 255)
-        cv2.putText(display, pain_text, (10, text_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        # Draw AU-based state
+        if face_result.state_result:
+            sr = face_result.state_result
+            state_text = f"State: {sr.state.value.upper()} ({sr.confidence:.1%})"
+            color = self._get_state_color(sr.state)
+            cv2.putText(display, state_text, (10, text_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+            # Draw sub-scores
+            scores_text = f"P:{sr.pain_score:.2f} F:{sr.fatigue_score:.2f} E:{sr.exhaustion_score:.2f} B:{sr.boredom_score:.2f}"
+            cv2.putText(display, scores_text, (10, text_y + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+            # Draw PSPI
+            pspi_text = f"PSPI: {sr.pspi_raw:.1f} | PERCLOS: {sr.perclos_raw:.1f}%"
+            cv2.putText(display, pspi_text, (10, text_y + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+    def _get_state_color(self, state: FacialState):
+        """Get display color for facial state."""
+        from modules.perception.facial_state_detector import FacialState
+        colors = {
+            FacialState.NORMAL: (0, 255, 0),
+            FacialState.PAIN: (0, 0, 255),
+            FacialState.FATIGUE: (0, 165, 255),
+            FacialState.EXHAUSTION: (0, 0, 255),
+            FacialState.BOREDOM: (128, 128, 128),
+        }
+        return colors.get(state, (255, 255, 255))
 
     def _draw_hud(self, display: np.ndarray, pose_result, face_result):
         """Draw heads-up display."""
@@ -327,8 +366,10 @@ class ADAPTRehabV3:
             context = {
                 "angles": pose_result.joint_angles if pose_result else {},
                 "rep_count": self.rep_count,
-                "pain_level": face_result.pain_level if face_result else "NONE",
-                "emotion": face_result.emotion.value if face_result else "neutral",
+                "facial_state": face_result.state_result.state.value if face_result and face_result.state_result else "normal",
+                "emotion": face_result.emotion_label if face_result else "neutral",
+                "pain_score": face_result.state_result.pain_score if face_result and face_result.state_result else 0.0,
+                "fatigue_score": face_result.state_result.fatigue_score if face_result and face_result.state_result else 0.0,
             }
 
             # Generate feedback
@@ -406,8 +447,8 @@ class ADAPTRehabV3:
         """Release all resources."""
         if self.pose_estimator:
             self.pose_estimator.close()
-        if self.face_analyzer:
-            self.face_analyzer.close()
+        if self.openface_analyzer:
+            self.openface_analyzer.close()
         if self.coach:
             self.coach.close()
 
@@ -427,6 +468,8 @@ def parse_args():
                         help="LLM model name")
     parser.add_argument("--feedback-interval", type=float, default=10.0,
                         help="Seconds between LLM feedback")
+    parser.add_argument("--use-gpu", action="store_true", default=True,
+                        help="Use GPU for OpenFace 3.0 inference")
     return parser.parse_args()
 
 

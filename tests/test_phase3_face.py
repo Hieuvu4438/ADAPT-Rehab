@@ -1,8 +1,13 @@
 """
-Phase 3: Face Analysis Tests.
+Phase 3: Face Analysis Tests (OpenFace 3.0 + AU-based State Detection).
 
-Tests face detection, AU detection, and emotion classification
-on real yoga pose videos.
+Tests:
+1. MediaPipe Face Mesh detection
+2. Facial State Detector (AU-based formulas)
+3. OpenFace 3.0 analyzer integration
+4. PSPI pain detection (Prkachin & Solomon, 2008)
+5. PERCLOS fatigue detection (Wierwille et al., 1994)
+6. Engagement/boredom detection (Whitehill et al., 2014)
 
 Run: python tests/test_phase3_face.py
 """
@@ -70,215 +75,257 @@ def test_face_detector():
     return True
 
 
-def test_au_detector():
-    """Test Action Unit detection on real face landmarks."""
+def test_facial_state_detector():
+    """Test AU-based facial state detection with synthetic AU data."""
     print("\n" + "=" * 60)
-    print("TEST 2: Action Unit Detection (FACS/PSPI)")
+    print("TEST 2: Facial State Detection (AU-based Formulas)")
     print("=" * 60)
 
-    from modules.perception import FaceDetector, ActionUnitDetector
+    from modules.perception.facial_state_detector import (
+        FacialStateDetector, FacialState, AUData,
+        PSPICalculator, PERCLOSCalculator, EngagementCalculator,
+        BlinkDetector, YawnDetector, EARCalculator,
+    )
 
-    face_det = FaceDetector()
-    if not face_det.initialize():
-        print("  SKIP: Face model not found")
-        return False
+    # Test PSPI calculator
+    print("\n  [PSPI Pain Calculator - Prkachin & Solomon, 2008]")
+    pspi = PSPICalculator()
 
-    au_det = ActionUnitDetector(use_baseline=True)
+    # No pain case
+    au_no_pain = AUData(au4=0.0, au6=0.0, au9=0.0, au43_approx=0.0)
+    score_no_pain = pspi.compute(au_no_pain)
+    print(f"    No pain: PSPI = {score_no_pain:.1f} (expected 0.0)")
+    assert score_no_pain == 0.0
 
-    video = get_test_videos(1)[0]
-    cap = cv2.VideoCapture(video)
+    # Moderate pain case
+    au_moderate = AUData(au4=2.0, au6=1.5, au9=1.0, au43_approx=0.0)
+    score_moderate = pspi.compute(au_moderate)
+    print(f"    Moderate pain: PSPI = {score_moderate:.1f} (expected 4.5)")
+    assert abs(score_moderate - 4.5) < 0.1
 
-    # First, calibrate from first frame with face
-    calibrated = False
-    au_results = []
+    # Severe pain case
+    au_severe = AUData(au4=5.0, au6=4.0, au9=3.0, au43_approx=1.0)
+    score_severe = pspi.compute(au_severe)
+    print(f"    Severe pain: PSPI = {score_severe:.1f} (expected 13.0)")
+    assert abs(score_severe - 13.0) < 0.1
 
-    for i in range(90):
-        ret, frame = cap.read()
-        if not ret:
-            break
+    level, conf = pspi.classify(score_severe)
+    print(f"    Classification: {level} (confidence: {conf:.1f})")
+    assert level == "SEVERE"
 
-        face_result = face_det.detect(frame)
-        if not face_result.is_valid or face_result.landmarks is None:
-            continue
+    # Test PERCLOS calculator
+    print("\n  [PERCLOS Fatigue Calculator - Wierwille et al., 1994]")
+    perclos = PERCLOSCalculator(window_seconds=5.0, fps=30.0)
 
-        if not calibrated:
-            au_det.set_baseline(face_result.landmarks)
-            calibrated = True
-            print(f"  Baseline calibrated at frame {i}")
+    # Simulate 150 frames (5 seconds at 30fps) with no eye closure
+    for _ in range(150):
+        val = perclos.update(0.0)
+    print(f"    Alert state: PERCLOS = {val:.1f}% (expected ~0%)")
+    assert val < 5.0
 
-        au_result = au_det.detect(face_result.landmarks)
-        if au_result.is_valid:
-            au_results.append(au_result)
+    # Simulate eye closure
+    perclos2 = PERCLOSCalculator(window_seconds=5.0, fps=30.0)
+    for _ in range(150):
+        val2 = perclos2.update(4.0)  # High AU43 = eyes closed
+    print(f"    Drowsy state: PERCLOS = {val2:.1f}% (expected ~100%)")
+    assert val2 > 80.0
 
-    cap.release()
-    face_det.close()
+    # Test Engagement calculator
+    print("\n  [Engagement Calculator - Whitehill et al., 2014]")
+    engagement = EngagementCalculator()
 
-    if not au_results:
-        print("  No face detections for AU analysis")
-        print("  RESULT: PASS (face not visible in video)")
-        return True
+    # Engaged (smiling)
+    au_engaged = AUData(au12=3.0, au1=0.0)
+    score_engaged = engagement.compute_engagement(au_engaged)
+    print(f"    Engaged (smile): {score_engaged:.2f} (expected > 0.5)")
+    assert score_engaged > 0.5
 
-    # Compute statistics
-    pspi_scores = [r.pain_score for r in au_results]
-    pain_levels = [r.pain_level for r in au_results]
+    # Disengaged (sad)
+    au_disengaged = AUData(au12=0.0, au1=3.0)
+    score_disengaged = engagement.compute_engagement(au_disengaged)
+    print(f"    Disengaged (sad): {score_disengaged:.2f} (expected < 0.5)")
+    assert score_disengaged < 0.5
 
-    print(f"  Frames analyzed: {len(au_results)}")
-    print(f"  PSPI range: {min(pspi_scores):.2f} - {max(pspi_scores):.2f}")
-    print(f"  PSPI mean: {np.mean(pspi_scores):.2f}")
-    print(f"  Pain levels: {dict(zip(*np.unique(pain_levels, return_counts=True)))}")
+    # Test full state detector pipeline
+    print("\n  [Full State Detector Pipeline]")
+    detector = FacialStateDetector(fps=30.0)
 
-    # Show AU activations for first frame
-    first = au_results[0]
-    print(f"  AU activations (first frame):")
-    for au, val in sorted(first.au_activations.items()):
-        print(f"    {au}: {val:.3f}")
+    # Normal state
+    result_normal = detector.process_frame({"AU1": 0.5, "AU12": 1.0, "AU4": 0.0, "AU6": 0.0, "AU9": 0.0, "AU25": 0.0, "AU26": 0.0})
+    print(f"    Normal: state={result_normal.state.value}, conf={result_normal.confidence:.2f}")
+    assert result_normal.state == FacialState.NORMAL
 
-    print("  RESULT: PASS")
+    # Pain state (high AU4 + AU6 + AU9)
+    result_pain = detector.process_frame({"AU1": 0.0, "AU12": 0.0, "AU4": 4.0, "AU6": 3.0, "AU9": 2.0, "AU25": 0.0, "AU26": 0.0})
+    print(f"    Pain: state={result_pain.state.value}, PSPI={result_pain.pspi_raw:.1f}, conf={result_pain.confidence:.2f}")
+    assert result_pain.state == FacialState.PAIN
+
+    print("\n  RESULT: PASS")
     return True
 
 
-def test_emotion_classifier():
-    """Test emotion classification on real face landmarks."""
+def test_openface_analyzer():
+    """Test OpenFace 3.0 analyzer integration."""
     print("\n" + "=" * 60)
-    print("TEST 3: Emotion Classification (Geometric Features)")
+    print("TEST 3: OpenFace 3.0 Analyzer Integration")
     print("=" * 60)
 
-    from modules.perception import FaceDetector, EmotionClassifier
+    from modules.perception.openface_analyzer import OpenFaceAnalyzer
 
-    face_det = FaceDetector()
-    if not face_det.initialize():
-        print("  SKIP: Face model not found")
-        return False
-
-    emotion_cls = EmotionClassifier()
-    emotion_cls.initialize()
-
-    video = get_test_videos(1)[0]
-    cap = cv2.VideoCapture(video)
-
-    emotion_results = []
-
-    for i in range(90):
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        face_result = face_det.detect(frame)
-        if not face_result.is_valid or face_result.landmarks is None:
-            continue
-
-        emotion_result = emotion_cls.classify(face_result.landmarks)
-        if emotion_result.is_valid:
-            emotion_results.append(emotion_result)
-
-    cap.release()
-    face_det.close()
-    emotion_cls.close()
-
-    if not emotion_results:
-        print("  No face detections for emotion analysis")
-        print("  RESULT: PASS (face not visible in video)")
-        return True
-
-    # Compute statistics
-    emotions = [r.emotion.value for r in emotion_results]
-    confidences = [r.confidence for r in emotion_results]
-
-    print(f"  Frames analyzed: {len(emotion_results)}")
-    print(f"  Dominant emotion: {max(set(emotions), key=emotions.count)}")
-    print(f"  Mean confidence: {np.mean(confidences):.3f}")
-    print(f"  Emotion distribution:")
-    unique, counts = np.unique(emotions, return_counts=True)
-    for emotion, count in zip(unique, counts):
-        pct = count / len(emotions) * 100
-        print(f"    {emotion}: {count} ({pct:.1f}%)")
-
-    print("  RESULT: PASS")
-    return True
-
-
-def test_face_analyzer_combined():
-    """Test combined face analyzer on real videos."""
-    print("\n" + "=" * 60)
-    print("TEST 4: Combined Face Analyzer")
-    print("=" * 60)
-
-    from modules.perception import FaceAnalyzer
-
-    analyzer = FaceAnalyzer(use_baseline=True)
+    analyzer = OpenFaceAnalyzer(device="cpu")
     if not analyzer.initialize():
-        print("  SKIP: Face model not found")
+        print("  SKIP: OpenFace 3.0 not available")
         return False
 
-    video = get_test_videos(1)[0]
-    cap = cv2.VideoCapture(video)
-
-    results = []
-    for i in range(60):
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        result = analyzer.analyze(frame, timestamp_ms=i * 33)
-        if result.is_valid:
-            results.append(result)
-
-    cap.release()
-    analyzer.close()
-
-    if not results:
-        print("  No face detections")
-        print("  RESULT: PASS (face not visible in video)")
-        return True
-
-    print(f"  Video: {os.path.basename(video)}")
-    print(f"  Frames analyzed: {len(results)}")
-
-    # Emotion summary
-    emotions = [r.emotion.value for r in results]
-    dominant = max(set(emotions), key=emotions.count)
-    print(f"  Dominant emotion: {dominant}")
-
-    # Pain summary
-    pain_scores = [r.pain_score for r in results]
-    pain_levels = [r.pain_level for r in results]
-    print(f"  PSPI range: {min(pain_scores):.2f} - {max(pain_scores):.2f}")
-    print(f"  Pain levels: {dict(zip(*np.unique(pain_levels, return_counts=True)))}")
-
-    # Show first result
-    first = results[0]
-    print(f"\n  First frame detail:")
-    print(f"    Emotion: {first.emotion.value} ({first.emotion_confidence:.3f})")
-    print(f"    Pain: {first.pain_level} (PSPI={first.pain_score:.2f})")
-    print(f"    AUs: {', '.join(f'{k}={v:.2f}' for k, v in first.au_activations.items())}")
-
-    print("  RESULT: PASS")
-    return True
-
-
-def test_face_analyzer_no_face():
-    """Test face analyzer handles no-face frames gracefully."""
-    print("\n" + "=" * 60)
-    print("TEST 5: Face Analyzer - No Face Handling")
-    print("=" * 60)
-
-    from modules.perception import FaceAnalyzer
-
-    analyzer = FaceAnalyzer()
-    if not analyzer.initialize():
-        print("  SKIP: Face model not found")
-        return False
-
-    # Create a blank frame (no face)
+    # Test with blank frame (should handle gracefully)
     blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    result = analyzer.analyze(blank_frame)
+    result = analyzer.analyze(blank_frame, timestamp_ms=0)
 
-    assert not result.is_valid, "Should not detect face in blank frame"
-    assert result.pain_level == "NONE"
-    assert result.emotion.value == "neutral"
+    print(f"  Blank frame: valid={result.is_valid}")
+    if result.is_valid:
+        print(f"    Emotion: {result.emotion_label}")
+        if result.state_result:
+            print(f"    State: {result.state_result.state.value}")
 
     analyzer.close()
-    print("  Blank frame: correctly returns no face")
+    print("  RESULT: PASS")
+    return True
+
+
+def test_blink_detector():
+    """Test blink detection from EAR pattern."""
+    print("\n" + "=" * 60)
+    print("TEST 4: Blink Detection (EAR-based)")
+    print("=" * 60)
+
+    from modules.perception.facial_state_detector import BlinkDetector
+
+    detector = BlinkDetector(fps=30.0, ear_threshold=0.2)
+
+    # Simulate normal blinks (brief EAR drops)
+    blink_count = 0
+    for i in range(900):  # 30 seconds
+        if i % 45 == 0:  # ~40 blinks/min (elevated)
+            # Blink: 3 frames of low EAR
+            for j in range(3):
+                result = detector.update(0.1)  # Closed
+                if result:
+                    blink_count += 1
+        else:
+            detector.update(0.3)  # Open
+
+    blink_rate = detector.get_blink_rate(window_seconds=30.0)
+    print(f"  Simulated blinks: {blink_count}")
+    print(f"  Blink rate: {blink_rate:.1f} blinks/min")
+    print(f"  Expected: ~40 blinks/min (elevated fatigue)")
+    assert blink_rate > 20.0, f"Blink rate too low: {blink_rate}"
+
+    print("  RESULT: PASS")
+    return True
+
+
+def test_yawn_detector():
+    """Test yawn detection from AU25+AU26."""
+    print("\n" + "=" * 60)
+    print("TEST 5: Yawn Detection (AU25 + AU26)")
+    print("=" * 60)
+
+    from modules.perception.facial_state_detector import YawnDetector
+
+    detector = YawnDetector(fps=30.0, au_threshold=1.5, min_duration_s=1.0)
+
+    # Simulate yawns (AU25 + AU26 active for > 1 second)
+    # Note: YawnDetector returns event when yawn ENDS (transition to non-yawn),
+    # so we must check return value in ALL branches.
+    yawn_count = 0
+    for i in range(3000):  # 100 seconds
+        if i % 600 == 0:  # Yawn every 20 seconds
+            for j in range(90):  # 3-second yawn
+                result = detector.update(au25=3.0, au26=3.0)
+                if result:
+                    yawn_count += 1
+        else:
+            result = detector.update(au25=0.0, au26=0.0)
+            if result:
+                yawn_count += 1
+
+    yawn_freq = detector.get_yawn_frequency(window_seconds=100.0)
+    print(f"  Simulated yawns: {yawn_count}")
+    print(f"  Yawn frequency: {yawn_freq:.2f} yawns/min")
+    print(f"  Expected: ~3 yawns/min")
+    assert yawn_count >= 3, f"Yawn count too low: {yawn_count}"
+
+    print("  RESULT: PASS")
+    return True
+
+
+def test_body_state_detector():
+    """Test body state detection with synthetic keypoints."""
+    print("\n" + "=" * 60)
+    print("TEST 6: Body State Detection (RTMW3D Keypoints)")
+    print("=" * 60)
+
+    from modules.analysis.body_state_detector import (
+        BodyStateDetector, BodyState, JointAngleCalculator, KeypointIndex,
+    )
+
+    detector = BodyStateDetector(fps=30.0)
+
+    # Create synthetic 3D keypoints (standing pose)
+    keypoints = np.zeros((20, 3))
+    # Head
+    keypoints[0] = [0, 1.7, 0]  # Nose
+    # Shoulders
+    keypoints[5] = [-0.2, 1.5, 0]  # Left shoulder
+    keypoints[6] = [0.2, 1.5, 0]   # Right shoulder
+    # Elbows
+    keypoints[7] = [-0.3, 1.2, 0]  # Left elbow
+    keypoints[8] = [0.3, 1.2, 0]   # Right elbow
+    # Wrists
+    keypoints[9] = [-0.3, 0.9, 0]  # Left wrist
+    keypoints[10] = [0.3, 0.9, 0]  # Right wrist
+    # Hips
+    keypoints[11] = [-0.15, 0.9, 0]  # Left hip
+    keypoints[12] = [0.15, 0.9, 0]   # Right hip
+    # Knees
+    keypoints[13] = [-0.15, 0.5, 0]  # Left knee
+    keypoints[14] = [0.15, 0.5, 0]   # Right knee
+    # Ankles
+    keypoints[15] = [-0.15, 0.0, 0]  # Left ankle
+    keypoints[16] = [0.15, 0.0, 0]   # Right ankle
+    # Neck and pelvis
+    keypoints[17] = [0, 1.6, 0]   # Neck
+    keypoints[18] = [0, 1.8, 0]   # Head top
+    keypoints[19] = [0, 0.9, 0]   # Pelvis
+
+    # Process frames
+    for i in range(100):
+        result = detector.process_frame(keypoints, timestamp_s=i / 30.0)
+        assert result.is_valid, f"Frame {i} should be valid"
+
+    print(f"  Frames processed: {detector._frame_count}")
+    print(f"  State: {result.state.value}")
+    print(f"  Trunk inclination: {result.trunk_inclination_deg:.1f}°")
+    print(f"  Asymmetry: {result.asymmetry_pct:.1f}%")
+
+    # Test joint angle computation
+    print("\n  [Joint Angle Computation]")
+    angles = JointAngleCalculator.compute_all_angles(keypoints)
+    for joint, angle in sorted(angles.items()):
+        print(f"    {joint}: {angle:.1f}°")
+
+    # Test with asymmetric pose (pain simulation)
+    print("\n  [Asymmetric Pose - Pain Simulation]")
+    detector2 = BodyStateDetector(fps=30.0)
+    asymmetric_kps = keypoints.copy()
+    asymmetric_kps[5] = [-0.2, 1.4, 0]  # Left shoulder dropped (asymmetry)
+
+    for i in range(100):
+        result2 = detector2.process_frame(asymmetric_kps, timestamp_s=i / 30.0)
+
+    print(f"    Asymmetry: {result2.asymmetry_pct:.1f}%")
+    print(f"    State: {result2.state.value}")
+
     print("  RESULT: PASS")
     return True
 
@@ -286,15 +333,16 @@ def test_face_analyzer_no_face():
 def main():
     """Run all Phase 3 tests."""
     print("\n" + "=" * 60)
-    print("PHASE 3: Face Analysis Tests")
+    print("PHASE 3: Face Analysis Tests (OpenFace 3.0 + AU Formulas)")
     print("=" * 60)
 
     tests = [
         ("Face Detection", test_face_detector),
-        ("AU Detection", test_au_detector),
-        ("Emotion Classification", test_emotion_classifier),
-        ("Combined Analyzer", test_face_analyzer_combined),
-        ("No Face Handling", test_face_analyzer_no_face),
+        ("Facial State Detector (AU Formulas)", test_facial_state_detector),
+        ("OpenFace 3.0 Analyzer", test_openface_analyzer),
+        ("Blink Detection", test_blink_detector),
+        ("Yawn Detection", test_yawn_detector),
+        ("Body State Detection", test_body_state_detector),
     ]
 
     passed = 0

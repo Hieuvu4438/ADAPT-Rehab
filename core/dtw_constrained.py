@@ -138,13 +138,13 @@ def weighted_constrained_dtw(
 
         # Normalize sequences
         user_norm = _normalize(user_seq)
-        ref_norm = _normalize(ref_seq)
+        ref_norm = _normalize(ref_seqs[joint])
 
         # Compute constrained DTW
         dist, path = constrained_dtw(user_norm, ref_norm, window_percent)
 
         # Normalize by sequence length
-        seq_len = max(len(user_seq), len(ref_seq))
+        seq_len = max(len(user_seq), len(ref_seqs[joint]))
         normalized_dist = dist / seq_len if seq_len > 0 else 0
 
         total_weighted_dist += weight * normalized_dist
