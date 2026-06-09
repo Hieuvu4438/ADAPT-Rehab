@@ -98,16 +98,20 @@ def test_facial_state_detector():
     assert score_no_pain == 0.0
 
     # Moderate pain case
+    # Corrected PSPI formula: AU4 + 2*AU6 + AU9 + 2*AU43
+    # = 2.0 + 2*1.5 + 1.0 + 2*0.0 = 6.0
     au_moderate = AUData(au4=2.0, au6=1.5, au9=1.0, au43_approx=0.0)
     score_moderate = pspi.compute(au_moderate)
-    print(f"    Moderate pain: PSPI = {score_moderate:.1f} (expected 4.5)")
-    assert abs(score_moderate - 4.5) < 0.1
+    print(f"    Moderate pain: PSPI = {score_moderate:.1f} (expected 6.0)")
+    assert abs(score_moderate - 6.0) < 0.1
 
     # Severe pain case
+    # Corrected PSPI formula: AU4 + 2*AU6 + AU9 + 2*AU43
+    # = 5.0 + 2*4.0 + 3.0 + 2*1.0 = 18.0
     au_severe = AUData(au4=5.0, au6=4.0, au9=3.0, au43_approx=1.0)
     score_severe = pspi.compute(au_severe)
-    print(f"    Severe pain: PSPI = {score_severe:.1f} (expected 13.0)")
-    assert abs(score_severe - 13.0) < 0.1
+    print(f"    Severe pain: PSPI = {score_severe:.1f} (expected 18.0)")
+    assert abs(score_severe - 18.0) < 0.1
 
     level, conf = pspi.classify(score_severe)
     print(f"    Classification: {level} (confidence: {conf:.1f})")

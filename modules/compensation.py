@@ -182,58 +182,39 @@ class CompensationDetector:
         hip_max = float(np.max(hip_arr))
 
         # Detect shoulder hiking
-        if shoulder_max > self.SHOULDER_THRESHOLD * 1.5:
-            severity = min(1.0, shoulder_max / (self.SHOULDER_THRESHOLD * 3))
+        # Use continuous severity formula: severity = max / (2 * threshold)
+        # This ensures the same physical deviation always produces the same severity
+        if shoulder_max > self.SHOULDER_THRESHOLD:
+            severity = min(1.0, shoulder_max / (self.SHOULDER_THRESHOLD * 2))
+            is_heavy = shoulder_max > self.SHOULDER_THRESHOLD * 1.5
             events.append(CompensationEvent(
                 type=CompensationType.SHOULDER_HIKING,
                 severity=severity,
                 details=f"Max shoulder diff: {shoulder_max:.3f} (threshold: {self.SHOULDER_THRESHOLD:.3f})"
             ))
-            types.append("Vai không đều (nặng)")
-        elif shoulder_max > self.SHOULDER_THRESHOLD:
-            severity = min(1.0, shoulder_max / (self.SHOULDER_THRESHOLD * 2))
-            events.append(CompensationEvent(
-                type=CompensationType.SHOULDER_HIKING,
-                severity=severity,
-                details=f"Max shoulder diff: {shoulder_max:.3f}"
-            ))
-            types.append("Vai không đều")
+            types.append("Vai không đều (nặng)" if is_heavy else "Vai không đều")
 
         # Detect trunk lean
-        if trunk_max > self.TRUNK_THRESHOLD * 1.5:
+        if trunk_max > self.TRUNK_THRESHOLD:
             severity = min(1.0, trunk_max / (self.TRUNK_THRESHOLD * 2))
+            is_heavy = trunk_max > self.TRUNK_THRESHOLD * 1.5
             events.append(CompensationEvent(
                 type=CompensationType.TRUNK_LEAN,
                 severity=severity,
                 details=f"Max trunk tilt: {trunk_max:.1f} deg (threshold: {self.TRUNK_THRESHOLD:.1f})"
             ))
-            types.append("Nghiêng thân nhiều")
-        elif trunk_max > self.TRUNK_THRESHOLD:
-            severity = min(1.0, trunk_max / (self.TRUNK_THRESHOLD * 1.5))
-            events.append(CompensationEvent(
-                type=CompensationType.TRUNK_LEAN,
-                severity=severity,
-                details=f"Max trunk tilt: {trunk_max:.1f} deg"
-            ))
-            types.append("Nghiêng thân")
+            types.append("Nghiêng thân nhiều" if is_heavy else "Nghiêng thân")
 
         # Detect hip shift
-        if hip_max > self.HIP_THRESHOLD * 1.5:
+        if hip_max > self.HIP_THRESHOLD:
             severity = min(1.0, hip_max / (self.HIP_THRESHOLD * 2))
+            is_heavy = hip_max > self.HIP_THRESHOLD * 1.5
             events.append(CompensationEvent(
                 type=CompensationType.HIP_SHIFT,
                 severity=severity,
                 details=f"Max hip diff: {hip_max:.3f} (threshold: {self.HIP_THRESHOLD:.3f})"
             ))
-            types.append("Hông không cân bằng")
-        elif hip_max > self.HIP_THRESHOLD:
-            severity = min(1.0, hip_max / (self.HIP_THRESHOLD * 1.5))
-            events.append(CompensationEvent(
-                type=CompensationType.HIP_SHIFT,
-                severity=severity,
-                details=f"Max hip diff: {hip_max:.3f}"
-            ))
-            types.append("Hông lệch nhẹ")
+            types.append("Hông không cân bằng" if is_heavy else "Hông lệch nhẹ")
 
         # Compute score (100 = no compensation)
         total_penalty = sum(e.severity * 40 for e in events)

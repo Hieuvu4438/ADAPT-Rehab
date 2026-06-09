@@ -93,7 +93,7 @@ class EnhancedScorer:
         >>> print(f"Rep {score.rep_number}: {score.total_score:.1f}/100")
     """
 
-    WEIGHTS = {
+    DEFAULT_WEIGHTS = {
         "rom": 0.25,
         "stability": 0.15,
         "flow": 0.20,
@@ -102,8 +102,14 @@ class EnhancedScorer:
         "smoothness": 0.10,
     }
 
-    def __init__(self):
-        """Initialize enhanced scorer."""
+    def __init__(self, weights: Optional[Dict[str, float]] = None):
+        """Initialize enhanced scorer.
+
+        Args:
+            weights: Optional custom weights dict. If None, uses DEFAULT_WEIGHTS.
+                     Weights should sum to 1.0.
+        """
+        self.WEIGHTS = weights if weights is not None else self.DEFAULT_WEIGHTS.copy()
         self._smoothness_analyzer = SmoothnessAnalyzer()
         self._compensation_detector = CompensationDetector()
         self._fatigue_analyzer = FatigueAnalyzer()
@@ -270,7 +276,9 @@ class EnhancedScorer:
 
         if len(peak_region) >= 3:
             peak_std = float(np.std(peak_region))
-            peak_quality_score = max(0.0, 100.0 - peak_std * 5)
+            # Use divisor of 3 instead of 5 for elderly-friendly scoring
+            # A std of 33 degrees gives score 0 (vs 20 degrees with divisor 5)
+            peak_quality_score = max(0.0, 100.0 - peak_std * 3)
         else:
             peak_quality_score = 50.0
 

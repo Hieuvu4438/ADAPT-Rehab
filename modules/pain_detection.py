@@ -175,14 +175,17 @@ class PainDetector:
         "AU43": 0.40,  # Nhắm mắt - giảm độ mở mắt >40%
     }
     
-    # Trọng số của từng AU trong tính điểm đau
+    # Custom AU weights for geometric pain scoring (NOT standard PSPI)
+    # Standard PSPI (Prkachin & Solomon, 2008) uses integer weights:
+    #   PSPI = AU4 + 2*max(AU6,AU7) + max(AU9,AU10) + 2*AU43
+    # These normalized weights are used for the geometric fallback method.
     AU_WEIGHTS = {
-        "AU4": 0.25,   # Cau mày - quan trọng
-        "AU6": 0.15,
-        "AU7": 0.20,   # Căng mí - quan trọng
-        "AU9": 0.10,
-        "AU10": 0.10,
-        "AU43": 0.20,  # Nhắm mắt - quan trọng
+        "AU4": 0.25,   # Brow lowerer - important pain indicator
+        "AU6": 0.15,   # Cheek raiser
+        "AU7": 0.20,   # Lid tightener - important
+        "AU9": 0.10,   # Nose wrinkler
+        "AU10": 0.10,  # Upper lip raiser
+        "AU43": 0.20,  # Eye closure - important
     }
     
     # Ngưỡng mức độ đau

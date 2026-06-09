@@ -324,24 +324,25 @@ class SPARCCalculator:
     """
     SPectral ARC length (SPARC) for movement smoothness.
 
-    Formula (Balasubramanian, Melendez-Calderon & Burdet, 2015):
-        1. V(f) = FFT(v(t))
-        2. Ŵ(f) = |V(f)| / |V(0)|
-        3. f_c = cutoff frequency where |Ŵ(f)| < 0.01
-        4. SPARC = -∫₀^fc √((1/fc)² + (dŴ/df)²) df
+    Formula (Balasubramanian, Melendez-Calderon & Burdet, 2012, Eq. 4):
+        SPARC = -integral_0^omega_c sqrt((1/omega_c)^2 + (dM_hat/domega)^2) domega
+
+    Where:
+        M_hat(omega) = |V(omega)| / max(|V(omega)|)  (normalized magnitude spectrum)
+        omega_c = cutoff frequency where M_hat(omega) <= threshold (0.05)
 
     Properties:
         - Dimensionless
         - Amplitude-independent
         - Duration-independent (key advantage over jerk-based metrics)
-        - Range: typically [-4, 0] for human movements
-        - Smoother → larger (less negative) values
+        - Range: typically [-6, 0] for human movements
+        - Smoother -> larger (less negative) values
 
     Reference: Balasubramanian, S., Melendez-Calderon, A., & Burdet, E.
-    (2015). IEEE Trans. Biomed. Eng., 59(8), 2126-2136.
+    (2012). IEEE Trans. Biomed. Eng., 59(8), 2126-2136.
     """
 
-    def __init__(self, fps: float = 30.0, threshold: float = 0.01):
+    def __init__(self, fps: float = 30.0, threshold: float = 0.05):
         self.fps = fps
         self.threshold = threshold
 
@@ -353,9 +354,10 @@ class SPARCCalculator:
             speed_profile: (T,) speed time series
 
         Returns:
-            SPARC value (typically [-4, 0], higher = smoother)
+            SPARC value (typically [-6, 0], higher = smoother)
         """
-        if len(speed_profile) < 10:
+        # Minimum 30 data points for reliable SPARC (Balasubramanian et al., 2021)
+        if len(speed_profile) < 30:
             return 0.0
 
         # FFT
@@ -363,33 +365,38 @@ class SPARCCalculator:
         V = np.fft.rfft(speed_profile)
         freqs = np.fft.rfftfreq(N, d=1.0 / self.fps)
 
-        # Normalize by DC component
-        if abs(V[0]) < 1e-8:
+        # Normalize magnitude by its max (Balasubramanian Eq. 3)
+        mag = np.abs(V)
+        if np.max(mag) < 1e-10:
             return 0.0
-        W_hat = np.abs(V) / abs(V[0])
+        M_hat = mag / np.max(mag)
 
-        # Find cutoff frequency
-        above_threshold = np.where(W_hat > self.threshold)[0]
+        # Find cutoff frequency where normalized magnitude drops below threshold
+        above_threshold = np.where(M_hat > self.threshold)[0]
         if len(above_threshold) == 0:
             return 0.0
         fc_idx = above_threshold[-1]
-        fc = freqs[fc_idx]
+        omega_c = freqs[fc_idx]  # Cutoff frequency in Hz
 
-        if fc < 1e-8:
+        if omega_c < 1e-10:
             return 0.0
 
-        # Compute SPARC
-        W_cut = W_hat[:fc_idx + 1]
-        f_cut = freqs[:fc_idx + 1]
+        # Crop to cutoff frequency
+        freq_crop = freqs[:fc_idx + 1]
+        mag_crop = M_hat[:fc_idx + 1]
 
-        # Numerical derivative
-        dW_df = np.gradient(W_cut, f_cut)
+        # Normalize frequency axis by cutoff frequency (Balasubramanian Eq. 4)
+        omega_bar = freq_crop / omega_c  # Normalized frequency [0, 1]
+        d_omega_bar = np.diff(omega_bar)
+        d_mag = np.diff(mag_crop)
 
-        # Arc length integral
-        integrand = np.sqrt((1.0 / fc) ** 2 + dW_df ** 2)
-        sparc = -np.trapz(integrand, f_cut)
+        # Spectral arc length integral
+        arc_length = np.sum(np.sqrt(d_omega_bar ** 2 + d_mag ** 2))
 
-        return float(sparc)
+        # SPARC = -arc_length
+        sparc = -arc_length
+
+        return float(np.clip(sparc, -6.0, 0.0))
 
 
 # ============================================================================

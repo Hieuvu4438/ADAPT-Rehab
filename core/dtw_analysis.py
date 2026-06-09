@@ -1,25 +1,18 @@
 """
-DTW Analysis Module for MEMOTION.
+DTW Analysis Module for ADAPT-Rehab.
 
-Triển khai Weighted Dynamic Time Warping để so sánh nhịp điệu
-chuyển động giữa người dùng và video mẫu.
+Weighted Dynamic Time Warping for comparing movement rhythms between
+user and reference video.
 
-Tại sao cần DTW thay vì so sánh trực tiếp?
-    - Người già di chuyển với tốc độ khác nhau
-    - Có thể dừng lại giữa chừng
-    - DTW "kéo giãn" thời gian để tìm sự tương đồng tối ưu
+References:
+    - Tormene, P., et al. (2009). "How to normalize sequences for dynamic
+      time warping." Information Sciences, 179(13).
+    - Sakoe, H., & Chiba, S. (1978). "Dynamic programming algorithm
+      optimization for spoken word recognition." IEEE Trans. ASSP, 26(1).
+    - Winter, D.A. (2009). Biomechanics and Motor Control of Human Movement.
 
-Weighted DTW cho phép:
-    - Tập trung vào khớp chính (trọng số cao)
-    - Giảm ảnh hưởng của khớp nhiễu (trọng số thấp)
-    
-Ví dụ: Khi tập giơ tay
-    - Vai: weight = 1.0 (quan trọng nhất)
-    - Khuỷu: weight = 0.7
-    - Đầu gối: weight = 0.1 (không liên quan)
-
-Author: MEMOTION Team
-Version: 1.0.0
+Author: ADAPT-Rehab Team
+Version: 2.0.0
 """
 
 from dataclasses import dataclass
@@ -33,23 +26,22 @@ except ImportError:
     FASTDTW_AVAILABLE = False
 
 from scipy.spatial.distance import euclidean
-from scipy.ndimage import uniform_filter1d
+from scipy.signal import butter, filtfilt
 
 from .kinematics import JointType
 
 
 @dataclass
 class DTWResult:
-    """
-    Kết quả phân tích DTW.
-    
+    """DTW analysis result.
+
     Attributes:
-        distance: Khoảng cách DTW (càng nhỏ càng tốt).
-        normalized_distance: Distance chuẩn hóa theo độ dài chuỗi.
-        path: Đường đi tối ưu [(i1, j1), (i2, j2), ...].
-        similarity_score: Điểm tương đồng (0-100%).
-        rhythm_quality: Đánh giá nhịp điệu ("excellent", "good", "fair", "poor").
-        details: Chi tiết phân tích.
+        distance: Raw DTW distance (lower = more similar).
+        normalized_distance: Distance normalized by warping path length.
+        path: Optimal warping path [(i1, j1), (i2, j2), ...].
+        similarity_score: Similarity score (0-100%).
+        rhythm_quality: Quality rating ("excellent", "good", "fair", "poor").
+        details: Detailed per-joint analysis.
     """
     distance: float
     normalized_distance: float
@@ -57,7 +49,7 @@ class DTWResult:
     similarity_score: float
     rhythm_quality: str
     details: Dict = None
-    
+
     def __post_init__(self):
         if self.details is None:
             self.details = {}
@@ -66,38 +58,48 @@ class DTWResult:
 def preprocess_sequence(
     sequence: Union[List[float], np.ndarray],
     smooth_window: int = 5,
-    normalize: bool = True
+    normalize: bool = True,
+    fs: float = 30.0,
+    filter_cutoff: float = 10.0
 ) -> np.ndarray:
-    """
-    Tiền xử lý chuỗi trước khi tính DTW.
-    
-    Các bước:
-        1. Làm mượt bằng moving average (giảm nhiễu)
-        2. Chuẩn hóa về [0, 1] (để so sánh công bằng)
-    
+    """Preprocess sequence before DTW computation.
+
+    Uses Butterworth low-pass filter (biomechanics standard) instead of
+    moving average for better frequency response.
+
     Args:
-        sequence: Chuỗi góc gốc.
-        smooth_window: Kích thước cửa sổ làm mượt.
-        normalize: Có chuẩn hóa không.
-        
+        sequence: Raw angle sequence.
+        smooth_window: Minimum window size for fallback smoothing.
+        normalize: Whether to normalize to [0, 1].
+        fs: Sampling frequency in Hz (default: 30.0).
+        filter_cutoff: Butterworth filter cutoff frequency in Hz (default: 10.0).
+
     Returns:
-        np.ndarray: Chuỗi đã xử lý.
+        Preprocessed sequence.
     """
     arr = np.array(sequence, dtype=np.float64)
-    
+
     if len(arr) == 0:
         return arr
-    
-    # Làm mượt
-    if smooth_window > 1 and len(arr) >= smooth_window:
+
+    # Butterworth low-pass filter (Winter, 2009) - biomechanics standard
+    if len(arr) >= 32:  # Minimum for filtfilt stability
+        nyquist = fs / 2.0
+        normalized_cutoff = filter_cutoff / nyquist
+        if normalized_cutoff < 1.0:
+            b, a = butter(4, normalized_cutoff, btype='low')
+            arr = filtfilt(b, a, arr)
+    elif smooth_window > 1 and len(arr) >= smooth_window:
+        # Fallback: simple moving average for very short sequences
+        from scipy.ndimage import uniform_filter1d
         arr = uniform_filter1d(arr, size=smooth_window, mode='nearest')
-    
-    # Chuẩn hóa về [0, 1]
+
+    # Normalize to [0, 1] (optional - loses absolute angle information)
     if normalize:
         min_val, max_val = arr.min(), arr.max()
         if max_val - min_val > 1e-6:
             arr = (arr - min_val) / (max_val - min_val)
-    
+
     return arr
 
 
@@ -106,31 +108,29 @@ def compute_dtw_distance(
     seq2: Union[List[float], np.ndarray],
     radius: int = 1
 ) -> Tuple[float, List[Tuple[int, int]]]:
-    """
-    Tính khoảng cách DTW giữa 2 chuỗi 1D.
-    
-    Sử dụng FastDTW nếu có, fallback về implementation đơn giản.
-    
+    """Compute DTW distance between two 1D sequences.
+
+    Uses FastDTW if available, falls back to simple O(n*m) implementation.
+
     Args:
-        seq1: Chuỗi thứ nhất.
-        seq2: Chuỗi thứ hai.
-        radius: Bán kính tìm kiếm cho FastDTW.
-        
+        seq1: First sequence.
+        seq2: Second sequence.
+        radius: Search radius for FastDTW.
+
     Returns:
-        Tuple[distance, path]: Khoảng cách và đường đi.
+        Tuple of (distance, warping_path).
     """
     arr1 = np.array(seq1).reshape(-1, 1)
     arr2 = np.array(seq2).reshape(-1, 1)
-    
+
     if len(arr1) == 0 or len(arr2) == 0:
         return 0.0, []
-    
+
     if FASTDTW_AVAILABLE:
         distance, path = fastdtw(arr1, arr2, radius=radius, dist=euclidean)
     else:
-        # Fallback: Simple DTW implementation
         distance, path = _simple_dtw(arr1.flatten(), arr2.flatten())
-    
+
     return float(distance), list(path)
 
 
@@ -138,18 +138,17 @@ def _simple_dtw(
     seq1: np.ndarray,
     seq2: np.ndarray
 ) -> Tuple[float, List[Tuple[int, int]]]:
-    """
-    Implementation DTW đơn giản khi không có fastdtw.
-    
-    Độ phức tạp: O(n*m) với n, m là độ dài 2 chuỗi.
+    """Simple DTW implementation when fastdtw is not available.
+
+    O(n*m) time and space complexity.
     """
     n, m = len(seq1), len(seq2)
-    
-    # Ma trận chi phí tích lũy
+
+    # Accumulated cost matrix
     dtw_matrix = np.full((n + 1, m + 1), np.inf)
     dtw_matrix[0, 0] = 0
-    
-    # Điền ma trận
+
+    # Fill matrix
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             cost = abs(seq1[i-1] - seq2[j-1])
@@ -158,8 +157,8 @@ def _simple_dtw(
                 dtw_matrix[i, j-1],     # Deletion
                 dtw_matrix[i-1, j-1]    # Match
             )
-    
-    # Backtrack để tìm đường đi
+
+    # Backtrack to find optimal path
     path = []
     i, j = n, m
     while i > 0 or j > 0:
@@ -175,7 +174,7 @@ def _simple_dtw(
                 (dtw_matrix[i, j-1], i, j-1),
             ]
             _, i, j = min(candidates, key=lambda x: x[0])
-    
+
     path.reverse()
     return dtw_matrix[n, m], path
 
@@ -186,31 +185,22 @@ def compute_weighted_dtw(
     weights: Dict[JointType, float],
     preprocess: bool = True
 ) -> DTWResult:
-    """
-    Tính Weighted DTW cho nhiều khớp.
-    
-    Công thức:
+    """Compute Weighted DTW across multiple joints.
+
+    Formula:
         Total Distance = Σ (weight_i × dtw_distance_i) / Σ weight_i
-    
-    Ý nghĩa của weights:
-        - Weight cao = khớp quan trọng, ảnh hưởng lớn đến điểm
-        - Weight thấp = khớp phụ, có thể "tha thứ" sai lệch
-        
-    Ví dụ cho bài tập giơ tay:
-        weights = {
-            JointType.LEFT_SHOULDER: 1.0,   # Quan trọng nhất
-            JointType.LEFT_ELBOW: 0.5,      # Quan trọng vừa
-            JointType.LEFT_KNEE: 0.1,       # Không liên quan
-        }
-    
+
+    Normalization uses path-length normalization per Tormene et al. (2009):
+        normalized_distance = distance / len(warping_path)
+
     Args:
-        user_sequences: Dict mapping JointType → chuỗi góc của user.
-        ref_sequences: Dict mapping JointType → chuỗi góc mẫu.
-        weights: Dict mapping JointType → trọng số (0-1).
-        preprocess: Có tiền xử lý chuỗi không.
-        
+        user_sequences: Dict mapping JointType → user angle sequence.
+        ref_sequences: Dict mapping JointType → reference angle sequence.
+        weights: Dict mapping JointType → weight (0-1).
+        preprocess: Whether to preprocess sequences.
+
     Returns:
-        DTWResult: Kết quả phân tích.
+        DTWResult with analysis results.
     """
     if not user_sequences or not ref_sequences:
         return DTWResult(
@@ -220,68 +210,67 @@ def compute_weighted_dtw(
             similarity_score=100.0,
             rhythm_quality="unknown"
         )
-    
+
     total_weighted_distance = 0.0
     total_weight = 0.0
     joint_details = {}
     combined_path = []
-    
+
     for joint_type, user_seq in user_sequences.items():
         if joint_type not in ref_sequences:
             continue
-        
+
         ref_seq = ref_sequences[joint_type]
-        weight = weights.get(joint_type, 0.5)  # Default weight
-        
+        weight = weights.get(joint_type, 0.5)
+
         if weight < 1e-6:
-            continue  # Skip joints with zero weight
-        
-        # Tiền xử lý
+            continue
+
+        # Preprocess with Butterworth filter
         if preprocess:
             user_processed = preprocess_sequence(user_seq)
             ref_processed = preprocess_sequence(ref_seq)
         else:
             user_processed = np.array(user_seq)
             ref_processed = np.array(ref_seq)
-        
-        # Tính DTW cho khớp này
+
+        # Compute DTW for this joint
         distance, path = compute_dtw_distance(user_processed, ref_processed)
-        
-        # Chuẩn hóa theo độ dài
-        seq_len = max(len(user_seq), len(ref_seq))
-        normalized = distance / seq_len if seq_len > 0 else 0
-        
-        # Tích lũy
+
+        # Path-length normalization (Tormene et al., 2009)
+        # This is the correct normalization for clinical time series
+        path_len = len(path)
+        normalized = distance / path_len if path_len > 0 else 0
+
+        # Accumulate
         total_weighted_distance += weight * normalized
         total_weight += weight
-        
+
         joint_details[joint_type.value] = {
             "distance": distance,
             "normalized_distance": normalized,
             "weight": weight,
             "weighted_contribution": weight * normalized,
-            "path_length": len(path),
+            "path_length": path_len,
         }
-        
+
         if not combined_path:
             combined_path = path
-    
-    # Tính tổng hợp
+
+    # Compute final weighted distance
     if total_weight > 0:
         final_distance = total_weighted_distance / total_weight
     else:
         final_distance = 0.0
-    
-    # Chuyển đổi distance sang similarity score
-    # Sử dụng hàm exponential decay
-    # distance = 0 → similarity = 100%
-    # distance = 1 → similarity ≈ 37%
-    similarity_score = 100.0 * np.exp(-final_distance * 3)
+
+    # Convert distance to similarity score using Gaussian kernel
+    # sigma = 0.5 provides good discrimination for normalized distances
+    sigma = 0.5
+    similarity_score = 100.0 * np.exp(-final_distance**2 / (2 * sigma**2))
     similarity_score = float(np.clip(similarity_score, 0, 100))
-    
-    # Đánh giá nhịp điệu
+
     rhythm_quality = _evaluate_rhythm_quality(similarity_score)
-    
+
     return DTWResult(
         distance=total_weighted_distance,
         normalized_distance=final_distance,
@@ -297,18 +286,15 @@ def compute_single_joint_dtw(
     ref_sequence: List[float],
     preprocess: bool = True
 ) -> DTWResult:
-    """
-    Tính DTW cho một khớp duy nhất.
-    
-    Phiên bản đơn giản của compute_weighted_dtw.
-    
+    """Compute DTW for a single joint.
+
     Args:
-        user_sequence: Chuỗi góc của user.
-        ref_sequence: Chuỗi góc mẫu.
-        preprocess: Có tiền xử lý không.
-        
+        user_sequence: User angle sequence.
+        ref_sequence: Reference angle sequence.
+        preprocess: Whether to preprocess sequences.
+
     Returns:
-        DTWResult: Kết quả phân tích.
+        DTWResult with analysis results.
     """
     if not user_sequence or not ref_sequence:
         return DTWResult(
@@ -318,24 +304,27 @@ def compute_single_joint_dtw(
             similarity_score=100.0,
             rhythm_quality="unknown"
         )
-    
+
     if preprocess:
         user_processed = preprocess_sequence(user_sequence)
         ref_processed = preprocess_sequence(ref_sequence)
     else:
         user_processed = np.array(user_sequence)
         ref_processed = np.array(ref_sequence)
-    
+
     distance, path = compute_dtw_distance(user_processed, ref_processed)
-    
-    seq_len = max(len(user_sequence), len(ref_sequence))
-    normalized = distance / seq_len if seq_len > 0 else 0
-    
-    similarity_score = 100.0 * np.exp(-normalized * 3)
+
+    # Path-length normalization (Tormene et al., 2009)
+    path_len = len(path)
+    normalized = distance / path_len if path_len > 0 else 0
+
+    # Gaussian kernel similarity
+    sigma = 0.5
+    similarity_score = 100.0 * np.exp(-normalized**2 / (2 * sigma**2))
     similarity_score = float(np.clip(similarity_score, 0, 100))
-    
+
     rhythm_quality = _evaluate_rhythm_quality(similarity_score)
-    
+
     return DTWResult(
         distance=distance,
         normalized_distance=normalized,
@@ -346,14 +335,13 @@ def compute_single_joint_dtw(
 
 
 def _evaluate_rhythm_quality(similarity_score: float) -> str:
-    """
-    Đánh giá chất lượng nhịp điệu từ điểm tương đồng.
-    
+    """Evaluate rhythm quality from similarity score.
+
     Args:
-        similarity_score: Điểm tương đồng (0-100).
-        
+        similarity_score: Similarity score (0-100).
+
     Returns:
-        str: "excellent", "good", "fair", hoặc "poor".
+        Quality string: "excellent", "good", "fair", or "poor".
     """
     if similarity_score >= 85:
         return "excellent"
@@ -366,18 +354,17 @@ def _evaluate_rhythm_quality(similarity_score: float) -> str:
 
 
 def get_rhythm_feedback(dtw_result: DTWResult) -> str:
-    """
-    Tạo phản hồi về nhịp điệu cho người dùng.
-    
+    """Generate rhythm feedback for the user.
+
     Args:
-        dtw_result: Kết quả DTW.
-        
+        dtw_result: DTW analysis result.
+
     Returns:
-        str: Thông điệp phản hồi thân thiện.
+        Feedback message string.
     """
     quality = dtw_result.rhythm_quality
     score = dtw_result.similarity_score
-    
+
     feedback_map = {
         "excellent": f"Tuyệt vời! Nhịp điệu rất mượt mà ({score:.0f}%)!",
         "good": f"Tốt lắm! Nhịp điệu khá ổn ({score:.0f}%).",
@@ -385,7 +372,7 @@ def get_rhythm_feedback(dtw_result: DTWResult) -> str:
         "poor": f"Không sao! Từ từ luyện tập sẽ tốt hơn ({score:.0f}%).",
         "unknown": "Đang phân tích..."
     }
-    
+
     return feedback_map.get(quality, feedback_map["unknown"])
 
 
@@ -393,42 +380,35 @@ def analyze_speed_variation(
     timestamps: List[float],
     angles: List[float]
 ) -> Dict[str, float]:
-    """
-    Phân tích độ biến thiên tốc độ của chuyển động.
-    
-    Người già lý tưởng nên di chuyển đều đặn, không giật cục.
-    
+    """Analyze speed variation in movement.
+
     Args:
-        timestamps: Chuỗi timestamps (seconds).
-        angles: Chuỗi góc tương ứng.
-        
+        timestamps: Timestamp sequence (seconds).
+        angles: Corresponding angle sequence.
+
     Returns:
-        Dict chứa các metrics về tốc độ.
+        Dict with speed metrics.
     """
     if len(timestamps) < 2 or len(angles) < 2:
         return {"mean_velocity": 0, "velocity_std": 0, "smoothness": 1.0}
-    
+
     ts = np.array(timestamps)
     ang = np.array(angles)
-    
-    # Tính vận tốc góc (degrees/second)
+
     dt = np.diff(ts)
     da = np.diff(ang)
-    
-    # Tránh chia cho 0
+
     dt = np.where(dt < 1e-6, 1e-6, dt)
     velocity = da / dt
-    
+
     mean_vel = float(np.mean(np.abs(velocity)))
     std_vel = float(np.std(velocity))
-    
-    # Smoothness: 1 = rất mượt, 0 = rất giật
-    # Dựa trên tỷ lệ std/mean
+
     if mean_vel > 1e-6:
         smoothness = 1.0 / (1.0 + std_vel / mean_vel)
     else:
         smoothness = 1.0
-    
+
     return {
         "mean_velocity": mean_vel,
         "velocity_std": std_vel,
@@ -441,18 +421,16 @@ def analyze_speed_variation(
 def create_exercise_weights(
     exercise_type: str
 ) -> Dict[JointType, float]:
-    """
-    Tạo bảng trọng số phù hợp cho từng loại bài tập.
-    
+    """Create weight table for exercise type.
+
     Args:
         exercise_type: "arm_raise", "squat", "bicep_curl", etc.
-        
+
     Returns:
-        Dict[JointType, float]: Bảng trọng số.
+        Dict mapping JointType to weight.
     """
-    # Default: tất cả đều quan trọng như nhau
     default_weights = {jt: 0.5 for jt in JointType}
-    
+
     exercise_weights = {
         "arm_raise": {
             JointType.LEFT_SHOULDER: 1.0,
@@ -485,11 +463,10 @@ def create_exercise_weights(
             JointType.RIGHT_HIP: 0.2,
         },
     }
-    
+
     weights = exercise_weights.get(exercise_type.lower(), {})
-    
-    # Merge với default
+
     result = default_weights.copy()
     result.update(weights)
-    
+
     return result

@@ -461,22 +461,23 @@ class PSPICalculator:
     """
     Prkachin-Solomon Pain Intensity (PSPI) calculator.
 
-    Original formula (Prkachin & Solomon, 2008, Pain):
-        PSPI = AU4 + max(AU6, AU7) + max(AU9, AU10) + AU43
+    Original formula (Prkachin & Solomon, 2008, Pain, 139(2), 267-274):
+        PSPI = AU4 + 2*max(AU6, AU7) + max(AU9, AU10) + 2*AU43
+
+    Note the weights: max(AU6,AU7) and AU43 are weighted 2x, not 1x.
 
     Adapted for OpenFace 3.0 (only 8 AUs available):
-    - AU4 (Brow Lowerer): ✓ Available from OpenFace 3.0
-    - AU6 (Cheek Raiser): ✓ Available from OpenFace 3.0
-    - AU7 (Lid Tightener): ✗ NOT available → use AU6 only (conservative)
-    - AU9 (Nose Wrinkler): ✓ Available from OpenFace 3.0
-    - AU10 (Upper Lip Raiser): ✗ NOT available → use AU9 only (conservative)
-    - AU43 (Eyes Closed): ✗ NOT available → approximated from EAR
+    - AU4 (Brow Lowerer): Available from OpenFace 3.0 (weight 1)
+    - AU6 (Cheek Raiser): Available from OpenFace 3.0 (weight 2, substitutes for max(AU6,AU7))
+    - AU7 (Lid Tightener): NOT available → use AU6 only
+    - AU9 (Nose Wrinkler): Available from OpenFace 3.0 (weight 1)
+    - AU10 (Upper Lip Raiser): NOT available → use AU9 only
+    - AU43 (Eyes Closed): NOT available → approximated from EAR (weight 2)
 
-    Adapted formula:
-        PSPI_adapted = AU4 + AU6 + AU9 + AU43_approx
+    Adapted formula with correct weights:
+        PSPI_adapted = AU4 + 2*AU6 + AU9 + 2*AU43_approx
 
-    This is a conservative approximation. Missing AU7 and AU10 means we may
-    underestimate pain slightly, but avoids false positives from unmeasured AUs.
+    Theoretical max: 5 + 2*5 + 5 + 2*5 = 30
 
     Reference: Prkachin, K.M., & Solomon, P.E. (2008). Pain, 139(2), 267-274.
     """
@@ -488,23 +489,40 @@ class PSPICalculator:
     THRESHOLD_STRONG = 6.0
     THRESHOLD_SEVERE = 10.0
 
+    # Theoretical max for adapted formula: 5 + 2*5 + 5 + 2*5 = 30
+    PSPI_MAX = 30.0
+
     def compute(self, au_data: AUData) -> float:
         """
-        Compute adapted PSPI score.
+        Compute adapted PSPI score with correct weights.
 
         Args:
             au_data: AU intensities from OpenFace 3.0
 
         Returns:
-            PSPI score (0.0 - 11.0 theoretical max with adapted formula)
+            PSPI score (0.0 - 30.0 theoretical max)
         """
+        # Correct PSPI weights: AU4(1) + 2*AU6(2) + AU9(1) + 2*AU43(2)
         pspi = (
-            au_data.au4 +
-            au_data.au6 +       # max(AU6, AU7) → AU6 only (AU7 unavailable)
-            au_data.au9 +       # max(AU9, AU10) → AU9 only (AU10 unavailable)
-            au_data.au43_approx # AU43 approximated from EAR
+            au_data.au4 +               # Weight 1
+            2.0 * au_data.au6 +         # Weight 2 (substitutes for max(AU6, AU7))
+            au_data.au9 +               # Weight 1 (substitutes for max(AU9, AU10))
+            2.0 * au_data.au43_approx   # Weight 2
         )
         return pspi
+
+    def compute_normalized(self, au_data: AUData) -> float:
+        """
+        Compute PSPI normalized to [0, 1].
+
+        Args:
+            au_data: AU intensities from OpenFace 3.0
+
+        Returns:
+            Normalized PSPI score [0, 1]
+        """
+        pspi = self.compute(au_data)
+        return min(1.0, pspi / self.PSPI_MAX)
 
     def classify(self, pspi: float) -> Tuple[str, float]:
         """
@@ -925,7 +943,7 @@ class FacialStateDetector:
         )
 
         # 9. Normalize scores to [0, 1]
-        pain_score_norm = min(1.0, pspi / 16.0)  # PSPI max = 16
+        pain_score_norm = min(1.0, pspi / self.pspi_calculator.PSPI_MAX)  # PSPI max = 30
 
         self._state_history.append(state)
 
