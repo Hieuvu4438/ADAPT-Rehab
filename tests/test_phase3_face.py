@@ -29,48 +29,42 @@ def get_test_videos(n=3):
 
 
 def test_face_detector():
-    """Test MediaPipe Face Mesh detection on real videos."""
+    """Test RTMW3D Face Detector with synthetic keypoints."""
     print("\n" + "=" * 60)
-    print("TEST 1: Face Detection (MediaPipe Face Mesh)")
+    print("TEST 1: Face Detection (RTMW3D Keypoints)")
     print("=" * 60)
 
     from modules.perception import FaceDetector
+    import numpy as np
 
     detector = FaceDetector()
-    if not detector.initialize():
-        print("  SKIP: Face model not found (need face_landmarker.task)")
-        print("  Download: https://developers.google.com/mediapipe/solutions/vision/face_landmarker")
-        return False
 
-    videos = get_test_videos(3)
-    total_frames = 0
-    total_detected = 0
+    # Test with insufficient keypoints
+    result_invalid = detector.detect(np.zeros((10, 3)))
+    assert not result_invalid.is_valid, "Should reject insufficient keypoints"
+    print(f"  Invalid input: is_valid={result_invalid.is_valid} ✓")
 
-    for video_path in videos:
-        cap = cv2.VideoCapture(video_path)
-        detected = 0
-        frames = 0
+    # Test with synthetic 133 keypoints (RTMW3D output format)
+    # Face keypoints are at indices 23-90 (68 landmarks)
+    keypoints = np.random.randn(133, 3) * 0.1  # Small random values
+    # Set face region (indices 23-90) to reasonable values
+    for i in range(23, 91):
+        keypoints[i] = [0.5 + (i - 23) * 0.01, 0.3 + (i - 23) * 0.005, 0.0]
 
-        for _ in range(60):  # Test 60 frames per video
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frames += 1
-            result = detector.detect(frame)
-            if result.is_valid:
-                detected += 1
+    result_valid = detector.detect(keypoints)
+    print(f"  Valid keypoints: is_valid={result_valid.is_valid}")
+    if result_valid.is_valid:
+        print(f"    EAR: {result_valid.mean_ear:.3f}")
+        print(f"    Bbox: {result_valid.bbox}")
+        print(f"    Confidence: {result_valid.confidence:.3f}")
 
-        cap.release()
+    # Test with zero face keypoints (face not detected)
+    keypoints_no_face = np.zeros((133, 3))
+    keypoints_no_face[:23] = np.random.randn(23, 3) * 0.1  # Body only
+    result_no_face = detector.detect(keypoints_no_face)
+    assert not result_no_face.is_valid, "Should reject zero face keypoints"
+    print(f"  No face: is_valid={result_no_face.is_valid} ✓")
 
-        rate = detected / max(frames, 1) * 100
-        print(f"  {os.path.basename(video_path)}: {detected}/{frames} ({rate:.1f}%)")
-        total_frames += frames
-        total_detected += detected
-
-    overall_rate = total_detected / max(total_frames, 1) * 100
-    print(f"  Overall: {total_detected}/{total_frames} ({overall_rate:.1f}%)")
-
-    detector.close()
     print("  RESULT: PASS")
     return True
 
