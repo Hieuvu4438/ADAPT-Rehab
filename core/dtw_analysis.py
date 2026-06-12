@@ -182,7 +182,7 @@ def _simple_dtw(
 def compute_weighted_dtw(
     user_sequences: Dict[JointType, List[float]],
     ref_sequences: Dict[JointType, List[float]],
-    weights: Dict[JointType, float],
+    weights: Optional[Dict[JointType, float]] = None,
     preprocess: bool = True
 ) -> DTWResult:
     """Compute Weighted DTW across multiple joints.
@@ -196,19 +196,22 @@ def compute_weighted_dtw(
     Args:
         user_sequences: Dict mapping JointType → user angle sequence.
         ref_sequences: Dict mapping JointType → reference angle sequence.
-        weights: Dict mapping JointType → weight (0-1).
+        weights: Dict mapping JointType → weight (0-1). If None, equal weight
+            (1.0) is assigned to every joint present in ``user_sequences``.
         preprocess: Whether to preprocess sequences.
 
     Returns:
         DTWResult with analysis results.
     """
+    if weights is None:
+        weights = {joint: 1.0 for joint in user_sequences}
     if not user_sequences or not ref_sequences:
         return DTWResult(
             distance=0.0,
             normalized_distance=0.0,
             path=[],
-            similarity_score=100.0,
-            rhythm_quality="unknown"
+            similarity_score=0.0,
+            rhythm_quality="no_data"
         )
 
     total_weighted_distance = 0.0
@@ -222,9 +225,11 @@ def compute_weighted_dtw(
 
         ref_seq = ref_sequences[joint_type]
         weight = weights.get(joint_type, 0.5)
-
         if weight < 1e-6:
             continue
+
+        # Joint key as string (accepts both JointType enum and str)
+        joint_key = joint_type.value if hasattr(joint_type, "value") else str(joint_type)
 
         # Preprocess with Butterworth filter
         if preprocess:
@@ -246,7 +251,7 @@ def compute_weighted_dtw(
         total_weighted_distance += weight * normalized
         total_weight += weight
 
-        joint_details[joint_type.value] = {
+        joint_details[joint_key] = {
             "distance": distance,
             "normalized_distance": normalized,
             "weight": weight,
@@ -301,8 +306,8 @@ def compute_single_joint_dtw(
             distance=0.0,
             normalized_distance=0.0,
             path=[],
-            similarity_score=100.0,
-            rhythm_quality="unknown"
+            similarity_score=0.0,
+            rhythm_quality="no_data"
         )
 
     if preprocess:

@@ -67,7 +67,7 @@ class ADAPTRehabV3:
     Integrates all layers:
     - Perception: RTMW3D 3D pose + face analysis
     - Analysis: Quaternion kinematics + SPARC + compensation + fatigue
-    - Intelligence: MiMo LLM + Whisper ASR + Edge-TTS
+    - Intelligence: LLM + Edge-TTS
     - Output: Visual + audio feedback
     """
 
@@ -108,11 +108,28 @@ class ADAPTRehabV3:
         print("ADAPT-Rehab v3.0 - Multimodal AI Rehabilitation")
         print("=" * 60)
 
-        # 1. Pose Estimator (RTMW3D only)
-        print("\n[1/4] Initializing RTMW3D Pose Estimator...")
-        self.pose_estimator = create_estimator("rtmw3d")
-        if not self.pose_estimator.initialize():
-            print("  ✗ RTMW3D initialization failed!")
+        # 1. Pose Estimator
+        # Try the requested backend first, then fall back to MediaPipe
+        # so the pipeline can run on machines that don't have the full
+        # mmpose/mmcv/mmdet stack installed.
+        print("\n[1/5] Initializing Pose Estimator...")
+        backend = getattr(self.args, "pose_backend", "rtmw3d")
+        self.pose_estimator = None
+        for candidate in [backend] if backend == "mediapipe_fallback" else [backend, "mediapipe_fallback"]:
+            try:
+                est = create_estimator(candidate)
+                if est.initialize():
+                    self.pose_estimator = est
+                    if candidate != backend:
+                        print(f"  ⚠ Requested backend '{backend}' unavailable; "
+                              f"using '{candidate}'")
+                    break
+                else:
+                    print(f"  ⚠ {candidate} initialize() returned False")
+            except Exception as e:
+                print(f"  ⚠ {candidate} failed: {e}")
+        if self.pose_estimator is None:
+            print("  ✗ All pose backends failed!")
             return False
         print(f"  ✓ Pose: {self.pose_estimator.model_name}")
 
@@ -462,8 +479,13 @@ def parse_args():
                         help="Video source (webcam or path)")
     parser.add_argument("--pose-model", type=str, default=None,
                         help="Path to pose model")
+    parser.add_argument("--pose-backend", type=str, default="rtmw3d",
+                        choices=["rtmw3d", "mediapipe_fallback"],
+                        help="3D pose backend to use (default: rtmw3d; "
+                             "falls back to mediapipe_fallback if rtmw3d "
+                             "is unavailable in the environment)")
     parser.add_argument("--llm-provider", type=str, default="gemini",
-                        choices=["gemini", "openai", "anthropic", "mimo"],
+                        choices=["gemini", "openai", "mimo"],
                         help="LLM provider")
     parser.add_argument("--llm-api-key", type=str, default=None,
                         help="LLM API key")

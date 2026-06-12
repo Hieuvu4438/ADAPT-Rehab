@@ -55,8 +55,15 @@ def constrained_dtw(
     w = max(int(max(n, m) * window_percent), abs(n - m), min_window)
 
     # Distance function
+    # Default: L2 norm of the elementwise difference, which works for both
+    # 1D scalars (e.g. np.float64 vs np.float64) and 2D row vectors
+    # (e.g. a (3,) joint position vs another (3,) joint position).
     if dist_fn is None:
-        dist_fn = lambda a, b: abs(a - b)
+        def dist_fn(a, b):
+            diff = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+            if diff.ndim == 0:
+                return abs(float(diff))
+            return float(np.linalg.norm(diff))
 
     # Initialize cost matrix with infinity
     # Only compute within the Sakoe-Chiba band
@@ -103,27 +110,34 @@ def constrained_dtw(
 def weighted_constrained_dtw(
     user_seqs: dict,
     ref_seqs: dict,
-    weights: dict,
+    weights: "Optional[dict]" = None,
     window_percent: float = 0.1,
-) -> Tuple[float, dict]:
+) -> Tuple[float, float, dict]:
     """
     Weighted DTW with constraints for multiple joints.
 
     Args:
         user_seqs: Dict mapping joint_name -> user angle sequence.
         ref_seqs: Dict mapping joint_name -> reference angle sequence.
-        weights: Dict mapping joint_name -> importance weight.
+        weights: Dict mapping joint_name -> importance weight. If None, equal
+            weight (1.0) is assigned to every joint present in ``user_seqs``.
         window_percent: Sakoe-Chiba window width.
 
     Returns:
-        Tuple of (total_distance, per_joint_details).
+        Tuple of ``(similarity_score, total_distance, per_joint_details)``
+        where ``similarity_score`` is in ``[0, 100]`` (100 = identical),
+        ``total_distance`` is the path-length-normalized weighted distance,
+        and ``per_joint_details`` maps each joint to a dict with
+        ``distance``, ``normalized_distance``, ``weight``, and ``path_length``.
 
     Example:
         >>> user = {"shoulder": [10, 20, 30], "elbow": [5, 10, 15]}
         >>> ref = {"shoulder": [12, 22, 32], "elbow": [6, 11, 16]}
-        >>> weights = {"shoulder": 1.0, "elbow": 0.5}
-        >>> dist, details = weighted_constrained_dtw(user, ref, weights)
+        >>> sim, total, details = weighted_constrained_dtw(user, ref)
     """
+    if weights is None:
+        weights = {joint: 1.0 for joint in user_seqs}
+
     total_weighted_dist = 0.0
     total_weight = 0.0
     details = {}
@@ -163,7 +177,7 @@ def weighted_constrained_dtw(
     similarity = 100.0 * np.exp(-final_dist * 3)
     similarity = float(np.clip(similarity, 0, 100))
 
-    return similarity, details
+    return similarity, final_dist, details
 
 
 def _normalize(seq) -> np.ndarray:

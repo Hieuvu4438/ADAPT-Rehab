@@ -1,6 +1,12 @@
 """
 UI-PRMD Dataset Evaluation for ADAPT-Rehab.
 
+This script is now a **thin CLI wrapper** around
+``evaluation.benchmarks.uiprmd.UI_PRMDLoader`` (the canonical loader
+introduced in Phase 5 of the codebase fix). All data-loading, joint
+angle, and SPARC logic lives in the loader; this file just calls its
+methods and pretty-prints the output.
+
 UI-PRMD: University of Idaho - Physical Rehabilitation Movement Data.
 
 Dataset structure:
@@ -22,6 +28,17 @@ import pandas as pd
 from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Re-export from the canonical loader module so existing imports keep
+# working unchanged.
+from evaluation.benchmarks.uiprmd import (  # noqa: E402
+    UI_PRMDLoader,
+    KINECT_JOINTS,
+    ANGLE_DEFS,
+    _joint_angle as compute_joint_angle,  # for backward compat
+    _all_angles as compute_all_angles,
+    _sparc as compute_sparc,
+)
 
 
 # ============================================================================
@@ -276,20 +293,21 @@ def compute_smoothness_metrics(keypoints: np.ndarray) -> Dict:
 # ============================================================================
 
 def run_uiprmd_evaluation():
-    """Run evaluation on UI-PRMD dataset."""
+    """Run evaluation on UI-PRMD dataset via the canonical loader."""
     print("=" * 70)
     print("UI-PRMD Dataset Evaluation")
     print("=" * 70)
 
-    # Load dataset
-    data_path = "data/UI-PRMD/input.csv"
-    if not os.path.exists(data_path):
-        print(f"[Error] Dataset not found: {data_path}")
+    # Load dataset via the canonical loader
+    data_path = "data/UI-PRMD"
+    loader = UI_PRMDLoader(data_dir=data_path)
+    if not loader.is_available():
+        print(f"[Error] Dataset not found: {loader.input_csv}")
         return None
 
     print(f"\nLoading UI-PRMD dataset...")
-    keypoints = load_uiprmd_dataset(data_path)
-    confidence = get_confidence_mask(data_path)
+    keypoints = loader.load()
+    confidence = loader.get_confidence_mask()
 
     print(f"Shape: {keypoints.shape}")
     print(f"Confidence: {np.mean(confidence)*100:.1f}% visible")
@@ -298,7 +316,7 @@ def run_uiprmd_evaluation():
     print(f"\n{'='*50}")
     print("1. SELF-CONSISTENCY (Temporal Stability)")
     print(f"{'='*50}")
-    consistency = compute_self_consistency(keypoints)
+    consistency = loader.compute_self_consistency()
     print(f"  MPJPE (mean): {consistency['mpjpe_mean']:.3f}")
     print(f"  MPJPE (std): {consistency['mpjpe_std']:.3f}")
 
@@ -306,7 +324,7 @@ def run_uiprmd_evaluation():
     print(f"\n{'='*50}")
     print("2. JOINT ANGLE STATISTICS")
     print(f"{'='*50}")
-    angle_stats = compute_angle_statistics(keypoints)
+    angle_stats = loader.compute_joint_angles()
     for name, stats in angle_stats.items():
         print(f"  {name:20s}: mean={stats['mean']:.1f}°, std={stats['std']:.1f}°, range=[{stats['min']:.1f}, {stats['max']:.1f}]")
 
@@ -314,7 +332,7 @@ def run_uiprmd_evaluation():
     print(f"\n{'='*50}")
     print("3. SMOOTHNESS (SPARC)")
     print(f"{'='*50}")
-    smoothness = compute_smoothness_metrics(keypoints)
+    smoothness = loader.compute_smoothness()
     print(f"  Mean SPARC: {smoothness['mean_sparc']:.3f}")
     for name, sparc in smoothness['sparc'].items():
         print(f"  {name:20s}: {sparc:.3f}")

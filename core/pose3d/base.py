@@ -18,6 +18,7 @@ import numpy as np
 class PoseEstimatorType(Enum):
     """Available pose estimator backends."""
     RTMW3D = "rtmw3d"
+    MEDIAPIPE_FALLBACK = "mediapipe_fallback"
 
 
 @dataclass
@@ -183,8 +184,11 @@ def create_estimator(estimator_type: str = "rtmw3d", **kwargs) -> PoseEstimator3
     if estimator_type == "rtmw3d":
         from .rtmw3d import RTMW3DEstimator
         return RTMW3DEstimator(**kwargs)
+    elif estimator_type in ("mediapipe", "mediapipe_fallback"):
+        from .mediapipe_fallback import MediaPipeFallbackEstimator
+        return MediaPipeFallbackEstimator(**kwargs)
     else:
         raise ValueError(
             f"Unknown estimator: {estimator_type}. "
-            f"Available: ['rtmw3d']"
+            f"Available: ['rtmw3d', 'mediapipe_fallback']"
         )

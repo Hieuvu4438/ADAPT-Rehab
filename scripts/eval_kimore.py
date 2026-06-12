@@ -1,6 +1,12 @@
 """
 KIMORE Dataset Evaluation for ADAPT-Rehab.
 
+This script is now a **thin CLI wrapper** around
+``evaluation.benchmarks.kimore.KimoreLoader`` (the canonical loader
+introduced in Phase 5 of the codebase fix). All data-loading, joint
+angle, and DTW classification logic lives in the loader; this file
+just calls its methods and pretty-prints the output.
+
 KIMORE: KInematic assessment of MOvement and clinical scores for
 Remote monitoring of physical REhabilitation.
 
@@ -26,6 +32,35 @@ from itertools import combinations
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Re-export from the canonical loader module for backward compat.
+# The class methods (compute_classification_accuracy, etc.) live on the
+# KimoreLoader class; the legacy module-level functions are kept below
+# as thin wrappers so any existing code that imported them keeps working.
+from evaluation.benchmarks.kimore import (  # noqa: E402
+    KimoreLoader,
+    KINECT_JOINTS,
+    ANGLE_DEFS,
+    _all_angles as compute_joint_angles,
+    _angle_trajectory as extract_angle_trajectory,
+    _dtw_distance as dtw_distance,
+)
+
+
+# Module-level wrappers preserved for backward compatibility.
+def compute_classification_accuracy(exercises):
+    """Backward-compat wrapper around KimoreLoader.compute_classification_accuracy."""
+    loader = KimoreLoader()
+    loader.exercises = exercises
+    return loader.compute_classification_accuracy()
+
+
+def compute_clinical_score_correlation(exercises, clinical_scores):
+    """Backward-compat wrapper around KimoreLoader.compute_clinical_score_correlation."""
+    loader = KimoreLoader()
+    loader.exercises = exercises
+    loader.clinical_scores = clinical_scores
+    return loader.compute_clinical_score_correlation()
 
 
 # ============================================================================
@@ -330,20 +365,21 @@ def compute_clinical_score_correlation(
 # ============================================================================
 
 def run_kimore_evaluation():
-    """Run evaluation on KIMORE dataset."""
+    """Run evaluation on KIMORE dataset via the canonical loader."""
     print("=" * 70)
     print("KIMORE Dataset Evaluation")
     print("=" * 70)
 
-    # Load dataset
+    # Load dataset via the canonical loader
     data_path = "data/KIMORE/kimore_exercise_dataset.pkl"
-    if not os.path.exists(data_path):
+    loader = KimoreLoader(data_path=data_path)
+    if not loader.is_available():
         print(f"[Error] Dataset not found: {data_path}")
         return None
 
     print(f"\nLoading KIMORE dataset...")
-    exercises = load_kimore_dataset(data_path)
-    clinical_scores = load_kimore_clinical_scores(data_path)
+    exercises = loader.load()
+    clinical_scores = loader.get_clinical_scores()
 
     print(f"Exercises: {list(exercises.keys())}")
     for ex_name, samples in exercises.items():

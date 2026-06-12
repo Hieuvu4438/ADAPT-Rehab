@@ -88,11 +88,24 @@ def run_pipeline(video_path: str, output_dir: str):
     logger.info("\n>>> STAGE 2: INITIALIZING PERCEPTION MODELS")
     
     logger.info("  1. 3D Pose Estimator Model:")
-    logger.info("     - Model: RTMW3D-L (MMPose 2024)")
+    logger.info("     - Model: RTMW3D-L (MMPose 2024) — auto-fallback to MediaPipe")
     logger.info("     - Keypoints: 133 whole-body joints (body, hands, face)")
-    pose_estimator = create_estimator("rtmw3d")
-    pose_init = pose_estimator.initialize()
-    logger.info(f"     - Initialization Status: {'SUCCESS' if pose_init else 'FAILED (Fallback to MediaPipe)'}")
+    pose_estimator = None
+    for backend in ["rtmw3d", "mediapipe_fallback"]:
+        try:
+            candidate = create_estimator(backend)
+            if candidate.initialize():
+                pose_estimator = candidate
+                logger.info(f"     - Active backend: {backend}")
+                logger.info(f"     - Initialization Status: SUCCESS")
+                break
+            else:
+                logger.info(f"     - {backend} init returned False")
+        except Exception as e:
+            logger.info(f"     - {backend} failed: {e}")
+    if pose_estimator is None:
+        logger.info("     - Initialization Status: FAILED (no backend available)")
+    pose_init = pose_estimator is not None
 
     logger.info("  2. Face & Emotion Analysis Model:")
     logger.info("     - Models: OpenFace 3.0 (AU + Emotion + Gaze)")
@@ -219,12 +232,16 @@ def run_pipeline(video_path: str, output_dir: str):
     logger.info(f"    * Warping Distance: {dtw_dist:.3f}")
     logger.info(f"    * Alignment Path Length: {len(dtw_path)}")
 
-    # 3. Compensation LSTM
-    comp_res = compensation_detector.detect(pose_history)
-    logger.info(f"  - Compensation Detection (LSTM Backend):")
-    logger.info(f"    * Shoulder Hiking Probability: {comp_res.shoulder_hiking_prob:.2%}")
-    logger.info(f"    * Trunk Lean Probability: {comp_res.trunk_lean_prob:.2%}")
-    logger.info(f"    * Hip Shift Probability: {comp_res.hip_shift_prob:.2%}")
+    # 3. Compensation Detection (analyze full pose history at once)
+    comp_res = compensation_detector.analyze(pose_history)
+    logger.info(f"  - Compensation Detection:")
+    logger.info(f"    * Compensation Score: {comp_res.score:.1f}/100 "
+                f"(100 = no compensation)")
+    logger.info(f"    * Shoulder Height Diff (avg): {comp_res.shoulder_diff_avg:.3f}")
+    logger.info(f"    * Trunk Tilt (avg): {comp_res.trunk_tilt_avg:.1f}°")
+    logger.info(f"    * Hip Diff (avg): {comp_res.hip_diff_avg:.3f}")
+    if comp_res.detected_types:
+        logger.info(f"    * Detected: {', '.join(comp_res.detected_types)}")
     
     # 4. Final Scoring Call
     score = scorer.score_rep(

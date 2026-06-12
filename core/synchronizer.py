@@ -156,6 +156,9 @@ class SyncState:
     status_message: str = ""
     encouragement: str = ""
 
+    # Internal tracking (not part of public state)
+    _last_wait_timestamp: Optional[float] = field(default=None, repr=False)
+
 
 class MotionSyncController:
     """
@@ -261,6 +264,8 @@ class MotionSyncController:
         scale = (self._user_max_angle / ref_max) * (1 + self._challenge_factor)
         scale = min(scale, 1.0)  # Không vượt quá mẫu
         
+        import copy
+        self._exercise = copy.deepcopy(self._exercise)
         for cp in self._exercise.checkpoints:
             cp.target_angle *= scale
     
@@ -358,9 +363,13 @@ class MotionSyncController:
         # User chưa đạt → cần chờ
         if self._state.wait_start_time is None:
             self._state.wait_start_time = timestamp
-        
+            self._state._last_wait_timestamp = timestamp
+
         wait_duration = timestamp - self._state.wait_start_time
-        self._state.total_wait_time += wait_duration
+        # Only add per-frame delta, not cumulative elapsed
+        delta = timestamp - (self._state._last_wait_timestamp or timestamp)
+        self._state.total_wait_time += max(0.0, delta)
+        self._state._last_wait_timestamp = timestamp
         
         # Chờ quá lâu → bỏ qua
         if wait_duration > self.MAX_WAIT_TIME:
@@ -484,7 +493,7 @@ class MotionSyncController:
 
 
 def create_arm_raise_exercise(
-    total_frames: int,
+    total_frames: int = 300,
     fps: float = 30.0,
     max_angle: float = 150.0
 ) -> ExerciseDefinition:
@@ -551,7 +560,7 @@ def create_arm_raise_exercise(
 
 
 def create_squat_exercise(
-    total_frames: int,
+    total_frames: int = 300,
     fps: float = 30.0,
     max_angle: float = 90.0
 ) -> ExerciseDefinition:
@@ -607,7 +616,7 @@ def create_squat_exercise(
 
 
 def create_elbow_flex_exercise(
-    total_frames: int,
+    total_frames: int = 300,
     fps: float = 30.0,
     max_angle: float = 145.0
 ) -> ExerciseDefinition:
