@@ -31,16 +31,11 @@ def test_full_pipeline():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
-    except ImportError:
-        try:
-            from core.pose3d import create_estimator
-            pose_estimator = create_estimator()
-        except (ImportError, Exception):
-            print("  SKIP: No pose estimator available")
-            return True
-    else:
-        pose_estimator = MediaPipeFallbackEstimator()
+        from core.pose3d import create_estimator
+        pose_estimator = create_estimator("rtmw3d")
+    except (ImportError, Exception):
+        print("  SKIP: No pose estimator available")
+        return True
 
     from core.smoothness import SmoothnessAnalyzer
     from modules.compensation import CompensationDetector
@@ -137,16 +132,11 @@ def test_pose_to_kinematics():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
-    except ImportError:
-        try:
-            from core.pose3d import create_estimator
-            estimator = create_estimator()
-        except (ImportError, Exception):
-            print("  SKIP: No pose estimator available")
-            return True
-    else:
-        estimator = MediaPipeFallbackEstimator()
+        from core.pose3d import create_estimator
+        estimator = create_estimator("rtmw3d")
+    except (ImportError, Exception):
+        print("  SKIP: No pose estimator available")
+        return True
 
     from core.kinematics_quaternion import QuaternionKinematics
 
@@ -202,16 +192,11 @@ def test_scoring_session():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
-    except ImportError:
-        try:
-            from core.pose3d import create_estimator
-            estimator = create_estimator()
-        except (ImportError, Exception):
-            print("  SKIP: No pose estimator available")
-            return True
-    else:
-        estimator = MediaPipeFallbackEstimator()
+        from core.pose3d import create_estimator
+        estimator = create_estimator("rtmw3d")
+    except (ImportError, Exception):
+        print("  SKIP: No pose estimator available")
+        return True
 
     from modules.scoring_v2 import EnhancedScorer
 
@@ -278,16 +263,11 @@ def test_compensation_on_yoga():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
-    except ImportError:
-        try:
-            from core.pose3d import create_estimator
-            estimator = create_estimator()
-        except (ImportError, Exception):
-            print("  SKIP: No pose estimator available")
-            return True
-    else:
-        estimator = MediaPipeFallbackEstimator()
+        from core.pose3d import create_estimator
+        estimator = create_estimator("rtmw3d")
+    except (ImportError, Exception):
+        print("  SKIP: No pose estimator available")
+        return True
 
     from modules.compensation import CompensationDetector
 
@@ -333,16 +313,11 @@ def test_fatigue_across_videos():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
-    except ImportError:
-        try:
-            from core.pose3d import create_estimator
-            estimator = create_estimator()
-        except (ImportError, Exception):
-            print("  SKIP: No pose estimator available")
-            return True
-    else:
-        estimator = MediaPipeFallbackEstimator()
+        from core.pose3d import create_estimator
+        estimator = create_estimator("rtmw3d")
+    except (ImportError, Exception):
+        print("  SKIP: No pose estimator available")
+        return True
 
     from modules.fatigue import FatigueAnalyzer
 
@@ -397,16 +372,11 @@ def test_performance_benchmark():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
-    except ImportError:
-        try:
-            from core.pose3d import create_estimator
-            estimator = create_estimator()
-        except (ImportError, Exception):
-            print("  SKIP: No pose estimator available")
-            return True
-    else:
-        estimator = MediaPipeFallbackEstimator()
+        from core.pose3d import create_estimator
+        estimator = create_estimator("rtmw3d")
+    except (ImportError, Exception):
+        print("  SKIP: No pose estimator available")
+        return True
 
     if not estimator.initialize():
         print("  SKIP: Pose estimator init failed")

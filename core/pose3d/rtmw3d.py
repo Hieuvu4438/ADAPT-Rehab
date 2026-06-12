@@ -67,21 +67,59 @@ class RTMW3DEstimator(PoseEstimator3D):
         self._model_variant = model_variant
         self._model = None
         self._device = "cuda:0"
-        self._mmpose_path = "/tmp/mmpose"
-        self._project_path = os.path.join(self._mmpose_path, "projects", "rtmpose3d")
 
-        # Find model files
+        # Find model files (local to project)
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self._model_dir = os.path.join(base_dir, "models", "rtmw3d")
 
-        self._config_path = os.path.join(
-            self._project_path, "configs",
-            "rtmw3d-l_8xb64_cocktail14-384x288.py"
-        )
+        # Find MMPose repo: env var > common paths > pip install
+        self._mmpose_path = self._find_mmpose_path()
+        self._project_path = os.path.join(self._mmpose_path, "projects", "rtmpose3d") if self._mmpose_path else ""
+
+        # Config: prefer local copy in models/rtmw3d/
+        local_config = os.path.join(self._model_dir, "rtmw3d-l_8xb64_cocktail14-384x288.py")
+        if os.path.exists(local_config):
+            self._config_path = local_config
+        elif self._project_path:
+            self._config_path = os.path.join(
+                self._project_path, "configs",
+                "rtmw3d-l_8xb64_cocktail14-384x288.py"
+            )
+        else:
+            self._config_path = local_config  # Will fail with clear message
+
         self._checkpoint_path = os.path.join(
             self._model_dir,
             "rtmw3d-l_8xb64_cocktail14-384x288-794dbc78_20240626.pth"
         )
+
+    def _find_mmpose_path(self) -> Optional[str]:
+        """Find MMPose repo path by checking env vars and common locations."""
+        # 1. Environment variable
+        env_path = os.environ.get("MMPOSE_PATH") or os.environ.get("MMPose_PATH")
+        if env_path and os.path.isdir(env_path):
+            return env_path
+
+        # 2. Try importing mmpose (pip-installed)
+        try:
+            import mmpose
+            mmpose_dir = os.path.dirname(os.path.dirname(mmpose.__file__))
+            if os.path.isdir(os.path.join(mmpose_dir, "projects", "rtmpose3d")):
+                return mmpose_dir
+        except ImportError:
+            pass
+
+        # 3. Common locations
+        candidates = [
+            "/tmp/mmpose",
+            os.path.expanduser("~/mmpose"),
+            os.path.join(os.path.dirname(self._model_dir), "mmpose"),
+        ]
+        for path in candidates:
+            if os.path.isdir(os.path.join(path, "projects", "rtmpose3d")):
+                return path
+
+        return None
 
     def initialize(self, model_path: Optional[str] = None, **kwargs) -> bool:
         """
@@ -102,11 +140,14 @@ class RTMW3DEstimator(PoseEstimator3D):
             for path, name in [
                 (self._config_path, "Config"),
                 (self._checkpoint_path, "Model weights"),
-                (self._mmpose_path, "MMPose repo"),
             ]:
                 if not os.path.exists(path):
                     print(f"[RTMW3D] {name} not found: {path}")
                     return False
+
+            if not self._mmpose_path or not os.path.isdir(self._mmpose_path):
+                print("[RTMW3D] MMPose repo not found. Set MMPOSE_PATH env var or install to /tmp/mmpose")
+                return False
 
             # Add paths
             sys.path.insert(0, self._mmpose_path)

@@ -4,7 +4,6 @@ LLM API Client.
 Supports multiple LLM providers:
 - Gemini (Google)
 - OpenAI (GPT-4o)
-- Anthropic (Claude)
 - MiMo (Xiaomi)
 
 Usage:
@@ -16,8 +15,8 @@ Usage:
     # OpenAI
     client = LLMClient(provider="openai", api_key="sk-...")
 
-    # Claude
-    client = LLMClient(provider="anthropic", api_key="sk-ant-...")
+    # MiMo
+    client = LLMClient(provider="mimo", api_key="...")
 """
 
 from dataclasses import dataclass
@@ -29,7 +28,6 @@ import time
 class LLMProvider(Enum):
     GEMINI = "gemini"
     OPENAI = "openai"
-    ANTHROPIC = "anthropic"
     MIMO = "mimo"
 
 
@@ -51,14 +49,13 @@ class LLMClient:
     - Google Gemini (gemini-2.0-flash, gemini-1.5-pro, etc.)
     - OpenAI (GPT-4o, GPT-4, etc.)
     - MiMo (Xiaomi MiMo, OpenAI-compatible)
-    - Anthropic (Claude)
     """
 
     def __init__(self, provider: str = "gemini", api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize LLM client.
 
         Args:
-            provider: LLM provider name ("gemini", "openai", "anthropic", "mimo")
+            provider: LLM provider name ("gemini", "openai", "mimo")
             api_key: API key
             model: Model name (default depends on provider)
         """
@@ -69,7 +66,6 @@ class LLMClient:
         defaults = {
             LLMProvider.GEMINI: "gemini-2.0-flash",
             LLMProvider.OPENAI: "gpt-4o",
-            LLMProvider.ANTHROPIC: "claude-sonnet-4-20250514",
             LLMProvider.MIMO: "mimo-v2.5-pro",
         }
         self._model = model or defaults.get(self._provider, "gemini-2.0-flash")
@@ -102,10 +98,6 @@ class LLMClient:
                 else:
                     self._client = OpenAI(api_key=self._api_key)
 
-            elif self._provider == LLMProvider.ANTHROPIC:
-                from anthropic import Anthropic
-                self._client = Anthropic(api_key=self._api_key)
-
             self._is_initialized = True
             print(f"[LLM] Initialized: {self._provider.value} / {self._model}")
             return True
@@ -115,7 +107,7 @@ class LLMClient:
             if self._provider == LLMProvider.GEMINI:
                 print("[LLM] Install: pip install google-generativeai")
             else:
-                print("[LLM] Install: pip install openai anthropic")
+                print("[LLM] Install: pip install openai")
             return False
         except Exception as e:
             print(f"[LLM] Init failed: {e}")
@@ -151,8 +143,6 @@ class LLMClient:
                 resp = self._chat_gemini(message, system_prompt, history, temperature, max_tokens)
             elif self._provider in (LLMProvider.OPENAI, LLMProvider.MIMO):
                 resp = self._chat_openai(message, system_prompt, history, temperature, max_tokens)
-            elif self._provider == LLMProvider.ANTHROPIC:
-                resp = self._chat_anthropic(message, system_prompt, history, temperature, max_tokens)
             else:
                 return LLMResponse(error_message=f"Unknown provider: {self._provider}")
 
@@ -256,29 +246,6 @@ class LLMClient:
             content=r.choices[0].message.content,
             model=r.model,
             tokens_used=r.usage.total_tokens if r.usage else 0,
-            is_valid=True,
-        )
-
-    def _chat_anthropic(self, msg, sys, hist, temp, max_t) -> LLMResponse:
-        """Chat using Anthropic Claude API."""
-        kw = {
-            "model": self._model,
-            "max_tokens": max_t,
-            "temperature": temp,
-            "messages": [],
-        }
-        if sys:
-            kw["system"] = sys
-        if hist:
-            kw["messages"].extend(hist)
-        kw["messages"].append({"role": "user", "content": msg})
-
-        r = self._client.messages.create(**kw)
-
-        return LLMResponse(
-            content=r.content[0].text,
-            model=r.model,
-            tokens_used=r.usage.input_tokens + r.usage.output_tokens,
             is_valid=True,
         )
 

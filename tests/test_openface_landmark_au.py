@@ -186,7 +186,7 @@ class TestOpenFaceAnalyzer:
         assert result.au_intensities["AU12"] > 1.0
 
     def test_reset_clears_calibration(self, analyzer):
-        # Calibrate
+        # Calibrate — only runs geometric path if OF3 is NOT available
         landmarks = _make_synthetic_landmarks()
         for i in range(35):
             analyzer.analyze(
@@ -194,7 +194,9 @@ class TestOpenFaceAnalyzer:
                 timestamp_ms=i * 33,
                 face_landmarks=landmarks,
             )
-        assert analyzer._baseline is not None
+        if not analyzer._of3_available:
+            # Geometric path was used → baseline should be set
+            assert analyzer._baseline is not None
         analyzer.reset()
         assert analyzer._baseline is None
         assert analyzer._calibration_buffer == []

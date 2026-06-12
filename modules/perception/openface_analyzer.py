@@ -4,26 +4,26 @@ OpenFace Analyzer for ADAPT-Rehab.
 Provides Action Unit (AU) detection, emotion classification, and
 gaze estimation for facial behavior analysis.
 
-Originally designed to wrap OpenFace 3.0 (CMU MultiComp Lab) — see:
+Wraps **OpenFace 3.0** (CMU MultiComp Lab) — see:
     "OpenFace 3.0: A Multitask Toolkit for Facial Behavior Analysis"
     arXiv:2506.02891, June 2025
 
-This implementation is a **MediaPipe Face Mesh + calibrated geometric AU
-estimator**. It uses the 468-landmark MediaPipe Face Mesh (Tasks API)
-instead of the OpenFace 3.0 multitask model because:
-1. The `openface` pip package is the legacy OpenFace 2.0 wrapper, not
-   OpenFace 3.0, and does not provide face_detection / au_detection /
-   emotion submodules.
-2. MediaPipe is already a hard dependency of the project (used for the
-   face detector fallback) and ships with a 468-point face mesh that
-   provides enough information to compute FACS AU intensities from
-   calibrated geometric features.
+Architecture:
+    Frame → MediaPipe Face Mesh (468 landmarks, face detection)
+          → OpenFace 3.0 MTL (EfficientNet-B0 + GNN, AU + emotion + gaze)
+          → FacialStateDetector (clinical AU formulas)
+          → OpenFaceResult
 
-The AU intensities here are rule-based geometric estimates, not
-neural-network predictions. They are calibrated at runtime against a
-30-frame neutral baseline so the values are scale-invariant and
-comparable across sessions and users. The eight AUs that
-``FacialStateDetector`` expects are all produced:
+**Primary path**: OpenFace 3.0 MTL model (``openface.multitask_model.MultitaskPredictor``)
+takes a face crop and outputs 8 AU scores (GNN), 8 emotion logits, and
+gaze (yaw, pitch). Requires ``openface-test`` pip package and
+``MTL_backbone.pth`` weights (auto-downloaded from HuggingFace).
+
+**Fallback**: If OpenFace 3.0 is not installed or fails, falls back to
+a calibrated geometric AU estimator using MediaPipe 468-landmark distances.
+This is a rule-based heuristic, not a neural-network prediction.
+
+The eight AUs produced (FACS codes):
 
 - AU1: Inner Brow Raiser
 - AU2: Outer Brow Raiser
@@ -34,17 +34,10 @@ comparable across sessions and users. The eight AUs that
 - AU25: Lips Part
 - AU26: Jaw Drop
 
-Emotion classification is a deterministic rule-based mapping driven by
-the calibrated AU values, matching the 8 AffectNet labels expected by
-the rest of the codebase.
+These feed into ``FacialStateDetector`` for clinical state detection
+(PSPI pain, PERCLOS fatigue, Engagement boredom, etc.).
 
-Architecture:
-    Frame → MediaPipe FaceDetector (468 landmarks)
-          → Calibrated geometric AU estimator (this file)
-          → FacialStateDetector (AU-based formulas)
-          → OpenFaceResult (au + emotion + state)
-
-Version: 4.1.0
+Version: 5.0.0
 """
 
 from dataclasses import dataclass
@@ -172,6 +165,43 @@ _AU_SLOPES = {
     "AU26":  6.0,   # jaw drop
 }
 
+# The 8 AUs that FacialStateDetector expects.
+_REQUIRED_AUS = ["AU1", "AU2", "AU4", "AU6", "AU9", "AU12", "AU25", "AU26"]
+
+
+# ============================================================================
+# OpenFace 3.0 MTL constants
+# ============================================================================
+# The MTL model outputs 8 AU cosine-similarity scores and 8 emotion logits.
+# Neither the source code nor the model card specifies the index-to-label
+# mapping.  The mapping below follows the standard BP4D/DISFA AU subset
+# ordering used by JAANet-style models.  If it's wrong for this particular
+# checkpoint, change only this dict — everything else derives from it.
+#
+# OpenFace 3.0 AU output indices → our FACS AU names.
+# Where the OF3 AU doesn't exist in our 8, the closest equivalent is used.
+_OF3_AU_INDEX_MAP = {
+    0: "AU1",    # Inner Brow Raise
+    1: "AU2",    # Outer Brow Raiser
+    2: "AU4",    # Brow Lowerer
+    3: "AU6",    # Cheek Raise
+    4: "AU6",    # AU7 (Lid Tightener) → mapped to AU6 (closest)
+    5: "AU9",    # Nose Wrinkler
+    6: "AU12",   # Lip Corner Puller
+    7: "AU26",   # AU20 (Lip Stretcher) → mapped to AU26 (closest jaw-related)
+}
+# Note: AU25 (Lips Part) and AU26 (Jaw Drop) are not directly in the
+# standard BP4D 8-AU set.  Index 7 (AU20 / Lip Stretcher) is mapped to
+# AU26.  AU25 defaults to 0.0 from OF3 — the geometric fallback or the
+# MediaPipe EAR-based approximation in FacialStateDetector covers it.
+
+# OpenFace 3.0 emotion output indices → label names.
+# Standard AffectNet 8-class ordering used by EfficientNet-B0 variants.
+_OF3_EMOTION_LABELS = [
+    "neutral", "anger", "contempt", "disgust",
+    "fear", "happy", "sad", "surprise",
+]
+
 
 # ============================================================================
 # OpenFace Analyzer
@@ -202,9 +232,10 @@ class OpenFaceAnalyzer:
     def __init__(self, device: str = "cpu", model_dir: Optional[str] = None):
         """
         Args:
-            device: "cuda" or "cpu". The MediaPipe-backed implementation
-                runs on CPU; the argument is kept for signature parity.
-            model_dir: Unused; kept for backward compatibility.
+            device: "cuda" or "cpu". Passed to OpenFace 3.0 MTL when
+                available; MediaPipe always runs on CPU regardless.
+            model_dir: Directory containing ``MTL_backbone.pth``.
+                Defaults to ``models/openface3/`` relative to project root.
         """
         self.device = device
         self.model_dir = model_dir or os.path.join(
@@ -214,10 +245,14 @@ class OpenFaceAnalyzer:
         # Underlying MediaPipe face detector (lazy import)
         self._face_detector = None
 
+        # OpenFace 3.0 MTL predictor (lazy, set in initialize())
+        self._of3_predictor = None
+        self._of3_available = False
+
         # State detector
         self._state_detector = FacialStateDetector(fps=30.0)
 
-        # Calibration state
+        # Calibration state (used by geometric fallback only)
         self._is_initialized = False
         self._frame_count = 0
         self._calibration_buffer: List[Dict[str, float]] = []
@@ -225,12 +260,16 @@ class OpenFaceAnalyzer:
 
     def initialize(self) -> bool:
         """
-        Initialize the MediaPipe FaceDetector.
+        Initialize face detector and (optionally) OpenFace 3.0 MTL model.
+
+        The face detector (MediaPipe Face Mesh) is always required.
+        OpenFace 3.0 is optional — if it fails to load, the geometric
+        fallback is used silently.
 
         Returns:
-            True if initialization succeeded. Always returns True in
-            current implementation (MediaPipe is a hard dep).
+            True if the face detector initialized successfully.
         """
+        # --- MediaPipe face detector (required) ---
         try:
             from .face_detector import FaceDetector
         except ImportError as e:
@@ -246,11 +285,33 @@ class OpenFaceAnalyzer:
             logger.error(f"[OpenFace] FaceDetector init error: {e}")
             return False
 
+        # --- OpenFace 3.0 MTL model (optional) ---
+        self._of3_available = False
+        self._of3_predictor = None
+        try:
+            from openface.multitask_model import MultitaskPredictor  # type: ignore
+            mt_path = self._find_mtl_weights()
+            if mt_path is not None:
+                dev = self.device if self.device.startswith("cuda") else "cpu"
+                self._of3_predictor = MultitaskPredictor(
+                    model_path=mt_path, device=dev,
+                )
+                self._of3_available = True
+                logger.info(f"[OpenFace] OpenFace 3.0 MTL loaded on {dev}")
+            else:
+                logger.info("[OpenFace] MTL_backbone.pth not found — using geometric fallback")
+        except ImportError:
+            logger.info("[OpenFace] openface-test not installed — using geometric fallback")
+        except Exception as e:
+            logger.warning(f"[OpenFace] OF3 MTL init failed ({e}) — using geometric fallback")
+
         self._is_initialized = True
         self._frame_count = 0
         self._calibration_buffer = []
         self._baseline = None
-        logger.info("[OpenFace] Initialized (MediaPipe FaceMesh backend)")
+
+        backend = "OpenFace 3.0 MTL" if self._of3_available else "geometric fallback"
+        logger.info(f"[OpenFace] Initialized ({backend})")
         return True
 
     def analyze(
@@ -260,6 +321,9 @@ class OpenFaceAnalyzer:
         face_landmarks: Optional[np.ndarray] = None,
     ) -> OpenFaceResult:
         """Analyze a frame for AUs, emotion, and behavioral state.
+
+        Uses OpenFace 3.0 MTL (GNN) when available, otherwise falls back
+        to calibrated geometric estimation from MediaPipe landmarks.
 
         Args:
             frame: BGR image from OpenCV, shape (H, W, 3).
@@ -279,7 +343,7 @@ class OpenFaceAnalyzer:
         result = OpenFaceResult()
 
         try:
-            # 1) Face detection (or use provided landmarks)
+            # ---- 1) Face detection (or use provided landmarks) ----
             landmarks_468 = face_landmarks
             face_bbox = None
             confidence = 0.0
@@ -288,7 +352,6 @@ class OpenFaceAnalyzer:
                 detected = self._face_detector.detect(frame)
                 if detected is None or not getattr(detected, "is_valid", False):
                     return OpenFaceResult(error_message="No face detected")
-                # FaceResult exposes landmarks (468, 3) and bbox
                 landmarks_468 = getattr(detected, "landmarks", None)
                 face_bbox = getattr(detected, "bbox", None)
                 confidence = float(getattr(detected, "confidence", 0.7) or 0.7)
@@ -298,40 +361,43 @@ class OpenFaceAnalyzer:
 
             landmarks_468 = np.asarray(landmarks_468, dtype=np.float32)
             result.landmarks_468 = landmarks_468
-            result.face_bbox = face_bbox if face_bbox is not None else self._bbox_from_landmarks(landmarks_468)
+            result.face_bbox = (
+                face_bbox if face_bbox is not None
+                else self._bbox_from_landmarks(landmarks_468)
+            )
             result.face_confidence = confidence if confidence > 0 else 0.7
 
-            # 2) Compute raw geometric features (scale-normalized)
-            features = self._extract_features(landmarks_468)
+            # ---- 2) AU + Emotion (OpenFace 3.0 primary, geometric fallback) ----
+            of3_used = False
+            if self._of3_available and self._of3_predictor is not None:
+                face_crop = self._crop_face(frame, result.face_bbox)
+                if face_crop is not None:
+                    try:
+                        au, emo_label, emo_conf, emo_logits, gaze_y, gaze_p = \
+                            self._analyze_with_of3(face_crop)
+                        result.au_intensities = au
+                        result.emotion_label = emo_label
+                        result.emotion_confidence = emo_conf
+                        result.emotion_logits = emo_logits
+                        result.gaze_yaw = gaze_y
+                        result.gaze_pitch = gaze_p
+                        of3_used = True
+                    except Exception as e:
+                        logger.warning(
+                            f"[OpenFace] OF3 predict failed, "
+                            f"falling back to geometric: {e}"
+                        )
 
-            # 3) Calibrate baseline on the first N frames
-            if self._baseline is None:
-                self._calibration_buffer.append(features)
-                if len(self._calibration_buffer) >= self._CALIBRATION_FRAMES:
-                    self._baseline = self._build_baseline(self._calibration_buffer)
-                # During calibration, return zero AUs but a valid result so
-                # downstream state detection can run.
-                result.au_intensities = {k: 0.0 for k in _AU_SLOPES.keys()}
-                result.emotion_label = "neutral"
-                result.emotion_confidence = 0.0
-                result.state_result = self._state_detector.process_frame(
-                    au_raw=result.au_intensities,
-                    face_landmarks=landmarks_468,
+            if not of3_used:
+                # Geometric fallback path (calibration-based)
+                result = self._analyze_geometric(
+                    frame, result, landmarks_468,
                 )
-                result.is_valid = True
-                result.error_message = "calibrating"
-                return result
+                if result is None:
+                    return OpenFaceResult(error_message="Calibrating")
+                # gaze stays at 0.0 for geometric path
 
-            # 4) Compute AU intensities from relative changes vs baseline
-            result.au_intensities = self._compute_au_intensities(features, self._baseline)
-
-            # 5) Emotion from rule-based mapping
-            emo_label, emo_conf, emo_logits = self._emotion_from_aus(result.au_intensities)
-            result.emotion_label = emo_label
-            result.emotion_confidence = float(emo_conf)
-            result.emotion_logits = emo_logits
-
-            # 6) State detection (Pain / Fatigue / etc.) via AU formulas
+            # ---- 3) State detection (Pain / Fatigue / etc.) ----
             result.state_result = self._state_detector.process_frame(
                 au_raw=result.au_intensities,
                 face_landmarks=landmarks_468,
@@ -343,6 +409,147 @@ class OpenFaceAnalyzer:
         except Exception as e:
             logger.error(f"[OpenFace] Analysis error: {e}")
             return OpenFaceResult(error_message=str(e))
+
+    # ---------------------------------------------------------------------
+    # OpenFace 3.0 MTL helpers
+    # ---------------------------------------------------------------------
+
+    def _find_mtl_weights(self) -> Optional[str]:
+        """Locate MTL_backbone.pth in model_dir or via HuggingFace download."""
+        mt_path = os.path.join(self.model_dir, "MTL_backbone.pth")
+        if os.path.exists(mt_path):
+            return mt_path
+
+        # Try downloading from HuggingFace Hub
+        try:
+            from huggingface_hub import hf_hub_download  # type: ignore
+            logger.info("[OpenFace] Downloading MTL_backbone.pth from HuggingFace...")
+            downloaded = hf_hub_download(
+                repo_id="nutPace/openface_weights",
+                filename="MTL_backbone.pth",
+                local_dir=self.model_dir,
+                repo_type="model",
+            )
+            if os.path.exists(downloaded):
+                return downloaded
+        except Exception as e:
+            logger.debug(f"[OpenFace] HF download failed: {e}")
+
+        return None
+
+    @staticmethod
+    def _crop_face(
+        frame: np.ndarray, bbox: np.ndarray, padding: float = 0.2,
+    ) -> Optional[np.ndarray]:
+        """Crop face region from frame using a bounding box with padding.
+
+        Args:
+            frame: BGR image, shape (H, W, 3).
+            bbox: (4,) array ``[x1, y1, x2, y2]``.
+            padding: Fractional padding around the bbox (0.2 = 20%).
+
+        Returns:
+            Cropped face BGR array, or ``None`` if the crop is empty.
+        """
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = [float(v) for v in bbox]
+        bw, bh = x2 - x1, y2 - y1
+        if bw < 1 or bh < 1:
+            return None
+        pad_x, pad_y = bw * padding, bh * padding
+        cx1 = max(0, int(x1 - pad_x))
+        cy1 = max(0, int(y1 - pad_y))
+        cx2 = min(w, int(x2 + pad_x))
+        cy2 = min(h, int(y2 + pad_y))
+        crop = frame[cy1:cy2, cx1:cx2]
+        if crop.size == 0:
+            return None
+        return crop
+
+    def _analyze_with_of3(
+        self, face_crop: np.ndarray,
+    ) -> Tuple[Dict[str, float], str, float, np.ndarray, float, float]:
+        """Run OpenFace 3.0 MTL on a face crop.
+
+        Args:
+            face_crop: BGR face crop from ``_crop_face()``.
+
+        Returns:
+            ``(au_intensities, emotion_label, emotion_confidence,
+            emotion_logits, gaze_yaw, gaze_pitch)``
+        """
+        emotion_tensor, gaze_tensor, au_tensor = \
+            self._of3_predictor.predict(face_crop)  # type: ignore
+
+        # --- AU: cosine similarities → FACS [0, 5] ---
+        au_raw = au_tensor.squeeze(0).detach().cpu().numpy()  # (8,)
+        au_intensities: Dict[str, float] = {au: 0.0 for au in _REQUIRED_AUS}
+        for idx, val in enumerate(au_raw):
+            au_name = _OF3_AU_INDEX_MAP.get(idx)
+            if au_name is not None:
+                # Map cosine similarity [-1, 1] → [0, 5] FACS
+                facs = max(0.0, (float(val) + 1.0) / 2.0) * 5.0
+                # If multiple indices map to same AU, take the max
+                au_intensities[au_name] = max(au_intensities[au_name], facs)
+
+        # --- Emotion: argmax + softmax ---
+        import torch  # already imported at module level by of3
+        emotion_probs = torch.softmax(
+            emotion_tensor, dim=1,
+        ).squeeze(0).detach().cpu().numpy()
+        emotion_idx = int(torch.argmax(emotion_tensor, dim=1).item())
+        emotion_label = _OF3_EMOTION_LABELS[emotion_idx]
+        emotion_confidence = float(emotion_probs[emotion_idx])
+        emotion_logits = emotion_tensor.squeeze(0).detach().cpu().numpy()
+
+        # --- Gaze ---
+        gaze_yaw = float(gaze_tensor[0][0])
+        gaze_pitch = float(gaze_tensor[0][1])
+
+        return au_intensities, emotion_label, emotion_confidence, \
+            emotion_logits, gaze_yaw, gaze_pitch
+
+    def _analyze_geometric(
+        self,
+        frame: np.ndarray,
+        result: OpenFaceResult,
+        landmarks_468: np.ndarray,
+    ) -> Optional[OpenFaceResult]:
+        """Geometric fallback: calibration-based AU + rule-based emotion.
+
+        Returns the populated result, or ``None`` during calibration
+        (in which case the caller should return a ``calibrating`` result).
+        """
+        features = self._extract_features(landmarks_468)
+
+        # Calibrate baseline on the first N frames
+        if self._baseline is None:
+            self._calibration_buffer.append(features)
+            if len(self._calibration_buffer) >= self._CALIBRATION_FRAMES:
+                self._baseline = self._build_baseline(self._calibration_buffer)
+            # During calibration, return zero AUs but a valid result so
+            # downstream state detection can run.
+            result.au_intensities = {k: 0.0 for k in _REQUIRED_AUS}
+            result.emotion_label = "neutral"
+            result.emotion_confidence = 0.0
+            result.is_valid = True
+            result.error_message = "calibrating"
+            return None  # signal to caller
+
+        # Compute AU intensities from relative changes vs baseline
+        result.au_intensities = self._compute_au_intensities(
+            features, self._baseline,
+        )
+
+        # Emotion from rule-based mapping
+        emo_label, emo_conf, emo_logits = self._emotion_from_aus(
+            result.au_intensities,
+        )
+        result.emotion_label = emo_label
+        result.emotion_confidence = float(emo_conf)
+        result.emotion_logits = emo_logits
+
+        return result
 
     # ---------------------------------------------------------------------
     # Feature extraction (scale-normalized)
@@ -530,6 +737,8 @@ class OpenFaceAnalyzer:
             except Exception:
                 pass
         self._face_detector = None
+        self._of3_predictor = None
+        self._of3_available = False
         self._is_initialized = False
         self._calibration_buffer = []
         self._baseline = None

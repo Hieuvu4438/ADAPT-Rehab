@@ -45,8 +45,8 @@ def run_ablation_study():
             "use_llm": True,
         },
         "no_3d_pose": {
-            "description": "w/o 3D Pose (use MediaPipe fallback)",
-            "pose": "mediapipe_fallback",
+            "description": "w/o 3D Pose (use RTMW3D without quaternion)",
+            "pose": "rtmw3d",
             "use_quaternion": True,
             "use_sparc": True,
             "use_compensation": True,
@@ -122,9 +122,8 @@ def run_single_config(config: Dict, samples: list) -> Dict:
     try:
         estimator = create_estimator(pose_type)
         if not estimator.initialize():
-            print(f"  [Warning] {pose_type} init failed, using fallback")
-            estimator = create_estimator("mediapipe_fallback")
-            estimator.initialize()
+            print(f"  [Warning] {pose_type} init failed")
+            return {"mpjpe": 0, "p_mpjpe": 0, "fps": 0, "error": f"{pose_type} init failed"}
     except Exception as e:
         print(f"  [Error] {e}")
         return {"mpjpe": 0, "p_mpjpe": 0, "fps": 0, "error": str(e)}

@@ -180,12 +180,12 @@ class BenchmarkRunner:
             print(f"  [Error] Failed to create estimator: {estimator_type}")
             return result
 
-        # Track actual estimator type (may differ from requested due to fallback)
+        # Track actual estimator type
         actual_type = estimator.model_name.lower()
-        if "mediapipe" in actual_type:
-            result.estimator_name = "mediapipe_fallback"
-        elif "metrab" in actual_type:
+        if "metrab" in actual_type:
             result.estimator_name = "metrab"
+        elif "rtmw3d" in actual_type:
+            result.estimator_name = "rtmw3d"
         else:
             result.estimator_name = estimator_type
 
@@ -346,8 +346,8 @@ class BenchmarkRunner:
         if estimator_type == "metrab":
             # MeTRAbs outputs centimeters → mm
             return kps * 10.0
-        elif estimator_type == "mediapipe_fallback":
-            # MediaPipe world landmarks are in meters → mm
+        elif estimator_type == "rtmw3d":
+            # RTMW3D outputs in relative coordinates → mm
             # If using normalized coords, estimate scale from body proportions
             if np.max(np.abs(kps)) <= 1.5:
                 # Likely normalized coordinates [0, 1]
@@ -371,23 +371,16 @@ class BenchmarkRunner:
 
     def _get_joint_names(self, estimator_type: str, num_joints: int) -> List[str]:
         """Get meaningful joint names for the estimator."""
-        if estimator_type == "mediapipe_fallback":
-            # MediaPipe 33 landmarks
+        if estimator_type == "rtmw3d":
+            # RTMW3D 133 keypoints (body 33 + hands 42 + face 58)
             names = [
-                "nose", "left_eye_inner", "left_eye", "left_eye_outer",
-                "right_eye_inner", "right_eye", "right_eye_outer",
-                "left_ear", "right_ear", "mouth_left", "mouth_right",
-                "left_shoulder", "right_shoulder",
-                "left_elbow", "right_elbow",
+                "pelvis", "left_hip", "right_hip",
+                "spine1", "left_knee", "right_knee",
+                "spine2", "left_ankle", "right_ankle",
+                "spine3", "left_foot", "right_foot",
+                "neck", "left_shoulder", "right_shoulder",
+                "head", "left_elbow", "right_elbow",
                 "left_wrist", "right_wrist",
-                "left_pinky", "right_pinky",
-                "left_index", "right_index",
-                "left_thumb", "right_thumb",
-                "left_hip", "right_hip",
-                "left_knee", "right_knee",
-                "left_ankle", "right_ankle",
-                "left_heel", "right_heel",
-                "left_foot_index", "right_foot_index",
             ]
             return names[:num_joints] if num_joints <= len(names) else [f"joint_{i}" for i in range(num_joints)]
         elif estimator_type == "metrab":
@@ -421,11 +414,11 @@ class BenchmarkRunner:
         except Exception as e:
             print(f"  [Warning] Cannot create {estimator_type}: {e}")
 
-        # Fallback to mediapipe if requested estimator fails
-        if estimator_type != "mediapipe_fallback":
-            print(f"  [Fallback] Trying mediapipe_fallback...")
+        # Fallback to rtmw3d if requested estimator fails
+        if estimator_type != "rtmw3d":
+            print(f"  [Fallback] Trying rtmw3d...")
             try:
-                fallback = create_estimator("mediapipe_fallback")
+                fallback = create_estimator("rtmw3d")
                 if fallback.initialize():
                     return fallback
             except Exception as e2:

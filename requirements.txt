@@ -8,9 +8,6 @@ opencv-python
 numpy>=1.24.0
 scipy>=1.11.0
 
-# DTW for motion synchronization
-fastdtw>=0.3.4
-
 # Data handling
 pandas>=2.0.0
 
@@ -30,26 +27,24 @@ Pillow>=10.0.0
 # ==========================================
 # Face Analysis (OpenFace 3.0)
 # ==========================================
-# Install from: https://github.com/CMU-MultiComp-Lab/OpenFace-3.0
-# pip install openface-test
-# OR clone repo and install manually
+# PyPI: pip install openface-test  (use --no-deps to avoid Pillow conflict)
 torch>=2.0.0
 torchvision>=0.15.0
 timm>=0.9.0
+openface-test>=0.1.26
+huggingface_hub>=0.20.0
 
 # ==========================================
-# LLM API (GPT-4o / Claude / Gemini)
+# LLM API (GPT-4o / Gemini / MiMo)
 # ==========================================
 openai>=1.0.0
-anthropic>=0.18.0
 google-genai>=0.3.0
 
 # RAG Pipeline
-# langchain>=0.1.0
-# langchain-openai>=0.0.5
-
-# Speech Recognition (Whisper)
-# openai-whisper>=20231117
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.10
+faiss-cpu>=1.7.4
 
 # Text-to-Speech (Edge-TTS)
 edge-tts>=6.1.0

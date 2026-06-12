@@ -110,6 +110,7 @@ class FatigueAnalyzer:
         self._baseline_velocity = rep_data.get("mean_velocity", 0.0)
         self._baseline_variability = rep_data.get("angle_std", 0.0)
         self._rep_history = [rep_data]
+        self._baseline_set = True
 
     def analyze(self, rep_data: Dict) -> FatigueResult:
         """

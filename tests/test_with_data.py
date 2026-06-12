@@ -51,19 +51,19 @@ def test_video_loading():
     print("  RESULT: PASS")
 
 
-def test_mediapipe_fallback():
-    """Test MediaPipe fallback pose estimator on real videos."""
+def test_rtmw3d_pose():
+    """Test RTMW3D pose estimator on real videos."""
     print("\n" + "=" * 60)
-    print("TEST 2: MediaPipe Fallback Pose Estimation")
+    print("TEST 2: RTMW3D Pose Estimation")
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
+        from core.pose3d import create_estimator
     except ImportError:
-        print("  SKIP: MediaPipe not installed")
+        print("  SKIP: Pose estimator not available")
         return
 
-    estimator = MediaPipeFallbackEstimator()
+    estimator = create_estimator("rtmw3d")
     if not estimator.initialize():
         print("  SKIP: MediaPipe model not found")
         return
@@ -112,13 +112,13 @@ def test_quaternion_kinematics():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
+        from core.pose3d import create_estimator
         from core.kinematics_quaternion import QuaternionKinematics
     except ImportError:
         print("  SKIP: Dependencies not available")
         return
 
-    estimator = MediaPipeFallbackEstimator()
+    estimator = create_estimator("rtmw3d")
     if not estimator.initialize():
         print("  SKIP: MediaPipe model not found")
         return
@@ -173,13 +173,13 @@ def test_smoothness_on_real_data():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
+        from core.pose3d import create_estimator
         from core.smoothness import SmoothnessAnalyzer
     except ImportError:
         print("  SKIP: Dependencies not available")
         return
 
-    estimator = MediaPipeFallbackEstimator()
+    estimator = create_estimator("rtmw3d")
     if not estimator.initialize():
         print("  SKIP: MediaPipe model not found")
         return
@@ -228,13 +228,13 @@ def test_compensation_on_real_data():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
+        from core.pose3d import create_estimator
         from modules.compensation import CompensationDetector
     except ImportError:
         print("  SKIP: Dependencies not available")
         return
 
-    estimator = MediaPipeFallbackEstimator()
+    estimator = create_estimator("rtmw3d")
     if not estimator.initialize():
         print("  SKIP: MediaPipe model not found")
         return
@@ -280,13 +280,13 @@ def test_fatigue_across_reps():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
+        from core.pose3d import create_estimator
         from modules.fatigue import FatigueAnalyzer
     except ImportError:
         print("  SKIP: Dependencies not available")
         return
 
-    estimator = MediaPipeFallbackEstimator()
+    estimator = create_estimator("rtmw3d")
     if not estimator.initialize():
         print("  SKIP: MediaPipe model not found")
         return
@@ -337,13 +337,13 @@ def test_enhanced_scoring():
     print("=" * 60)
 
     try:
-        from core.pose3d import MediaPipeFallbackEstimator
+        from core.pose3d import create_estimator
         from modules.scoring_v2 import EnhancedScorer
     except ImportError:
         print("  SKIP: Dependencies not available")
         return
 
-    estimator = MediaPipeFallbackEstimator()
+    estimator = create_estimator("rtmw3d")
     if not estimator.initialize():
         print("  SKIP: MediaPipe model not found")
         return
@@ -464,7 +464,7 @@ def main():
 
     tests = [
         test_video_loading,
-        test_mediapipe_fallback,
+        test_rtmw3d_pose,
         test_quaternion_kinematics,
         test_smoothness_on_real_data,
         test_compensation_on_real_data,

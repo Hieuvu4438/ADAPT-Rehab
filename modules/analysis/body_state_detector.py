@@ -101,6 +101,7 @@ class BodyStateResult:
 
     # Metadata
     is_valid: bool = False
+    error_message: str = ""
     frame_count: int = 0
     rep_count: int = 0
 

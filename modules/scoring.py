@@ -29,14 +29,7 @@ from core.kinematics import JointType
 from core.synchronizer import MotionPhase
 from core.dtw_analysis import DTWResult
 from core.smoothness import SmoothnessAnalyzer, SmoothnessResult
-
-
-class FatigueLevel(Enum):
-    """Mức độ mệt mỏi."""
-    FRESH = 0       # Khỏe, có thể tiếp tục
-    LIGHT = 1       # Hơi mệt
-    MODERATE = 2    # Mệt vừa, cần chú ý
-    HEAVY = 3       # Rất mệt, nên nghỉ
+from modules.fatigue import FatigueLevel
 
 
 @dataclass
