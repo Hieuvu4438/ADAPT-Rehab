@@ -28,6 +28,7 @@ import numpy as np
 from core.smoothness import SmoothnessAnalyzer, SmoothnessResult
 from modules.compensation import CompensationDetector, CompensationResult
 from modules.fatigue import FatigueAnalyzer, FatigueResult, FatigueLevel
+from core.dtw_constrained import constrained_dtw, weighted_constrained_dtw
 
 
 @dataclass
@@ -45,6 +46,10 @@ class RepScoreV2:
     fatigue_score: float = 0.0
     compensation_types: List[str] = field(default_factory=list)
     notes: str = ""
+    # DTW comparison results
+    dtw_similarity: float = 0.0
+    dtw_distance: float = 0.0
+    ref_comparison_used: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +63,9 @@ class RepScoreV2:
             "total_score": round(self.total_score, 1),
             "fatigue": self.fatigue.name,
             "compensation_types": self.compensation_types,
+            "dtw_similarity": round(self.dtw_similarity, 1),
+            "dtw_distance": round(self.dtw_distance, 4),
+            "ref_comparison_used": self.ref_comparison_used,
             "notes": self.notes,
         }
 
@@ -134,6 +142,12 @@ class EnhancedScorer:
         pose_sequence: Optional[List[np.ndarray]] = None,
         dtw_score: Optional[float] = None,
         hold_phase_indices: Optional[np.ndarray] = None,
+        ref_angles: Optional[np.ndarray] = None,
+        ref_left_angles: Optional[np.ndarray] = None,
+        ref_right_angles: Optional[np.ndarray] = None,
+        multi_joint_user: Optional[Dict[str, np.ndarray]] = None,
+        multi_joint_ref: Optional[Dict[str, np.ndarray]] = None,
+        joint_weights: Optional[Dict[str, float]] = None,
     ) -> RepScoreV2:
         """
         Score a single repetition.
@@ -147,26 +161,58 @@ class EnhancedScorer:
             pose_sequence: Pose landmarks for compensation detection.
             dtw_score: Pre-computed DTW similarity score (0-100).
             hold_phase_indices: Indices of frames in HOLD phase.
+            ref_angles: Reference angle sequence for DTW comparison.
+            ref_left_angles: Reference left-side angles for symmetry.
+            ref_right_angles: Reference right-side angles for symmetry.
+            multi_joint_user: Dict of user angle sequences per joint for weighted DTW.
+            multi_joint_ref: Dict of reference angle sequences per joint for weighted DTW.
+            joint_weights: Importance weights per joint for weighted DTW.
 
         Returns:
             RepScoreV2 with all dimension scores.
         """
         rep_num = len(self._rep_scores) + 1
+        ref_used = False
+        dtw_sim = 0.0
+        dtw_dist = 0.0
 
-        # 1. ROM Score
+        # 1. ROM Score — use reference-based target if available
         rom_score = self._compute_rom(angles, target_angle)
 
         # 2. Stability Score
         stability_score = self._compute_stability(angles, hold_phase_indices)
 
-        # 3. Flow Score
-        if dtw_score is not None:
+        # 3. Flow Score — DTW comparison with reference when available
+        if multi_joint_user and multi_joint_ref:
+            # Weighted multi-joint DTW
+            dtw_sim, dtw_dist, _ = weighted_constrained_dtw(
+                multi_joint_user, multi_joint_ref,
+                weights=joint_weights, window_percent=0.15
+            )
+            flow_score = dtw_sim
+            ref_used = True
+        elif ref_angles is not None and len(ref_angles) > 5:
+            # Single-joint DTW
+            dist, path = constrained_dtw(angles, ref_angles, window_percent=0.15)
+            seq_len = max(len(angles), len(ref_angles))
+            norm_dist = dist / seq_len if seq_len > 0 else 0
+            dtw_sim = float(np.clip(100.0 * np.exp(-norm_dist * 3), 0, 100))
+            dtw_dist = norm_dist
+            flow_score = dtw_sim
+            ref_used = True
+        elif dtw_score is not None:
             flow_score = dtw_score
         else:
             flow_score = self._compute_flow(angles, timestamps)
 
-        # 4. Symmetry Score
-        symmetry_score = self._compute_symmetry(left_angles, right_angles)
+        # 4. Symmetry Score — use actual left/right from reference comparison
+        if ref_left_angles is not None and ref_right_angles is not None:
+            # Compare user symmetry vs reference symmetry
+            symmetry_score = self._compute_symmetry_vs_ref(
+                left_angles, right_angles, ref_left_angles, ref_right_angles
+            )
+        else:
+            symmetry_score = self._compute_symmetry(left_angles, right_angles)
 
         # 5. Compensation Score
         compensation_score, comp_types = self._compute_compensation(pose_sequence)
@@ -178,9 +224,9 @@ class EnhancedScorer:
         # 7. Fatigue Analysis
         rep_data = {
             "jerk_value": self._compute_jerk(angles, timestamps),
-            "max_angle": float(np.max(angles)),
+            "max_angle": float(np.max(angles)) if len(angles) > 0 else 0,
             "mean_velocity": float(np.mean(np.abs(np.diff(angles)))) if len(angles) > 1 else 0,
-            "angle_std": float(np.std(angles)),
+            "angle_std": float(np.std(angles)) if len(angles) > 0 else 0,
         }
 
         if rep_num == 1:
@@ -200,6 +246,8 @@ class EnhancedScorer:
 
         # Generate notes
         notes = []
+        if ref_used:
+            notes.append(f"DTW: {dtw_sim:.1f}% similarity")
         if fatigue_result.level.value >= FatigueLevel.MODERATE.value:
             notes.append(f"Mệt mỏi: {fatigue_result.level.name}")
         if comp_types:
@@ -217,11 +265,51 @@ class EnhancedScorer:
             fatigue=fatigue_result.level,
             fatigue_score=fatigue_result.composite_score,
             compensation_types=comp_types,
+            dtw_similarity=dtw_sim,
+            dtw_distance=dtw_dist,
+            ref_comparison_used=ref_used,
             notes="; ".join(notes),
         )
 
         self._rep_scores.append(score)
         return score
+
+    def _compute_symmetry_vs_ref(
+        self,
+        user_left: Optional[np.ndarray],
+        user_right: Optional[np.ndarray],
+        ref_left: Optional[np.ndarray],
+        ref_right: Optional[np.ndarray],
+    ) -> float:
+        """Compare user's left-right symmetry vs reference's left-right symmetry.
+
+        If user has no left/right data, compare how well user matches reference
+        on both sides independently, then average.
+        """
+        if user_left is None or user_right is None:
+            # No user L/R data — use reference to at least check consistency
+            if ref_left is not None and ref_right is not None:
+                ref_diff = float(np.mean(np.abs(ref_left - ref_right)))
+                # Score based on how symmetric the reference is (informational)
+                return max(0, min(100, 100 - ref_diff * 2))
+            return 85.0
+
+        min_len = min(len(user_left), len(user_right))
+        if min_len < 3:
+            return 85.0
+
+        # User's own L-R difference
+        user_diff = float(np.mean(np.abs(user_left[:min_len] - user_right[:min_len])))
+
+        # Reference's L-R difference (if available)
+        if ref_left is not None and ref_right is not None:
+            ref_min = min(len(ref_left), len(ref_right))
+            ref_diff = float(np.mean(np.abs(ref_left[:ref_min] - ref_right[:ref_min])))
+            # How close is user's asymmetry to reference's asymmetry
+            asymmetry_error = abs(user_diff - ref_diff)
+            return max(0, min(100, 100 - asymmetry_error * 4))
+        else:
+            return max(0, min(100, 100 - user_diff * 4))
 
     def get_session_report(self) -> SessionReportV2:
         """Generate session summary report."""

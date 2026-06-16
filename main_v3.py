@@ -30,6 +30,7 @@ from core.pose3d.base import create_estimator, PoseEstimator3D, Pose3DResult
 from core.kinematics_quaternion import QuaternionKinematics
 from core.smoothness import SmoothnessAnalyzer
 from core.angle_filter import AngleFilter
+from core.dtw_constrained import constrained_dtw, weighted_constrained_dtw
 
 # Functional modules
 from modules.perception.openface_analyzer import OpenFaceAnalyzer, OpenFaceResult
@@ -38,6 +39,8 @@ from modules.analysis.body_state_detector import BodyStateDetector, BodyState
 from modules.compensation import CompensationDetector
 from modules.fatigue import FatigueAnalyzer, FatigueLevel
 from modules.scoring_v2 import EnhancedScorer, RepScoreV2
+from modules.calibration import SafeMaxCalibrator, UserProfile, JointCalibrationData
+from modules.target_generator import compute_scale_factor
 
 # Intelligence
 from modules.intelligence.llm.client import LLMClient
@@ -91,6 +94,15 @@ class ADAPTRehabV3:
         # Intelligence
         self.coach: Optional[RehabCoach] = None
         self.tts: Optional[TextToSpeech] = None
+
+        # Reference video data (for comparison mode)
+        self.ref_data: Optional[Dict[str, np.ndarray]] = None
+        self.ref_target_angle: float = 0.0
+
+        # Calibration data
+        self.user_profile: Optional[UserProfile] = None
+        self.calibrator: Optional[SafeMaxCalibrator] = None
+        self.is_calibrating: bool = False
 
         # State
         self.frame_count = 0
@@ -177,6 +189,41 @@ class ADAPTRehabV3:
         # Init scorer
         self.scorer.start_session("v3_session")
 
+        # 6. Reference video (optional)
+        ref_path = getattr(self.args, "reference", None)
+        if ref_path and os.path.exists(ref_path):
+            print("\n[6/6] Extracting Reference Video Angles...")
+            self.ref_data = self._extract_reference_angles(ref_path)
+            if self.ref_data:
+                ref_primary = self.ref_data.get("left_shoulder", np.array([]))
+                if len(ref_primary) > 0:
+                    self.ref_target_angle = float(np.max(ref_primary))
+                    print(f"  ✓ Reference target: {self.ref_target_angle:.1f}°")
+
+        # 7. Load existing calibration (optional, for non-calibrate mode)
+        cal_path = getattr(self.args, "calibration", None)
+        if cal_path and os.path.exists(cal_path) and not getattr(self.args, "calibrate", False):
+            print(f"\n[7/7] Loading Calibration: {cal_path}")
+            try:
+                import json
+                with open(cal_path, "r") as f:
+                    profile_data = json.load(f)
+                self.user_profile = UserProfile.from_dict(profile_data)
+                # Apply to reference target
+                if self.ref_data and self.user_profile:
+                    ref_primary = self.ref_data.get("left_shoulder", np.array([]))
+                    if len(ref_primary) > 0:
+                        ref_max = float(np.max(ref_primary))
+                        user_max = self.user_profile.get_max_angle(
+                            type('JT', (), {'value': 'left_shoulder'})()
+                        )
+                        if user_max:
+                            scale = compute_scale_factor(user_max, ref_max, 0.05)
+                            self.ref_target_angle = ref_max * scale
+                print(f"  ✓ Calibration loaded: {len(self.user_profile.joint_limits)} joints")
+            except Exception as e:
+                print(f"  ⚠ Calibration load failed: {e}")
+
         print("\n✓ All components initialized")
         print(f"  Pose: {self.pose_estimator.model_name}")
         print(f"  Face: {'OpenFace 3.0' if self.openface_analyzer else 'Disabled'}")
@@ -185,6 +232,216 @@ class ADAPTRehabV3:
         print(f"  TTS: {'Enabled' if self.tts else 'Disabled'}")
         print("=" * 60)
         return True
+
+    def _extract_reference_angles(self, video_path: str) -> Optional[Dict[str, np.ndarray]]:
+        """Extract joint angle sequences from a reference video.
+
+        Creates a fresh pose estimator instance to avoid timestamp monotonicity
+        issues with MediaPipe's VIDEO mode.
+
+        Args:
+            video_path: Path to reference video file.
+
+        Returns:
+            Dict mapping joint name -> filtered angle sequence, or None on failure.
+        """
+        # Create a fresh estimator to avoid timestamp conflicts
+        ref_estimator = None
+        for candidate in ["rtmw3d", "mediapipe_fallback"]:
+            try:
+                est = create_estimator(candidate)
+                if est.initialize():
+                    ref_estimator = est
+                    break
+            except Exception:
+                pass
+
+        if ref_estimator is None:
+            print("  ⚠ Cannot create estimator for reference video")
+            return None
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"  ⚠ Cannot open reference video: {video_path}")
+            ref_estimator.close()
+            return None
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        joint_names = [
+            "left_shoulder", "right_shoulder",
+            "left_elbow", "right_elbow",
+            "left_hip", "right_hip",
+            "left_knee", "right_knee",
+        ]
+        angle_sequences: Dict[str, List[float]] = {j: [] for j in joint_names}
+
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            ts_ms = int(frame_idx * (1000 / fps))
+            result = ref_estimator.estimate(frame, ts_ms)
+            if result.is_valid and result.joint_angles:
+                for jname in joint_names:
+                    angle_sequences[jname].append(result.joint_angles.get(jname, 0.0))
+            frame_idx += 1
+            if frame_idx % 30 == 0:
+                print(f"    Reference frame {frame_idx}/{total}")
+
+        cap.release()
+        ref_estimator.close()
+
+        # Apply Butterworth filter
+        filtered: Dict[str, np.ndarray] = {}
+        for jname in joint_names:
+            raw = np.array(angle_sequences[jname], dtype=np.float64)
+            if len(raw) >= 10:
+                filtered[jname] = self.angle_filter.filter(raw)
+            else:
+                filtered[jname] = raw
+
+        print(f"  ✓ Reference: {frame_idx} frames extracted")
+        return filtered
+
+    def run_calibration(self, cap: cv2.VideoCapture, fps: float) -> Optional[UserProfile]:
+        """Run Safe-Max calibration phase via webcam.
+
+        Guides the user through:
+        1. Stand still (neutral pose) — 2 seconds
+        2. Move each joint to maximum ROM (without pain) — 5 seconds per joint
+        3. System computes stable max angle (P95 of filtered signal)
+
+        Args:
+            cap: OpenCV VideoCapture (webcam).
+            fps: Video FPS.
+
+        Returns:
+            UserProfile with calibration data, or None on failure.
+        """
+        print("\n" + "=" * 60)
+        print("CALIBRATION PHASE — Safe-Max ROM")
+        print("=" * 60)
+        print("Hướng dẫn:")
+        print("  1. Đứng thẳng trước camera (tư thế trung tính)")
+        print("  2. Khi nghe 'Bắt đầu', đưa tay phải lên CAO NHẤT có thể")
+        print("     (KHÔNG GÂY ĐAU)")
+        print("  3. Hạ tay xuống. Lặp lại với tay trái, gối phải, gối trái")
+        print("=" * 60)
+
+        joints_to_calibrate = [
+            ("left_shoulder", "tay trái (nâng lên)"),
+            ("right_shoulder", "tay phải (nâng lên)"),
+            ("left_knee", "gối trái (gập lại)"),
+            ("right_knee", "gối phải (gập lại)"),
+        ]
+
+        joint_limits: Dict[str, JointCalibrationData] = {}
+        frame_count = 0
+
+        for joint_name, instruction in joints_to_calibrate:
+            print(f"\n  → Chuẩn bị: {instruction}")
+            print("    Đứng thẳng trong 2 giây...")
+            cv2.waitKey(2000)
+
+            # Collect neutral pose (2 seconds)
+            neutral_angles: List[float] = []
+            neutral_start = time.time()
+            while time.time() - neutral_start < 2.0:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame_count += 1
+                ts_ms = int(frame_count * (1000 / fps))
+                result = self.pose_estimator.estimate(frame, ts_ms)
+                if result.is_valid and result.joint_angles:
+                    neutral_angles.append(result.joint_angles.get(joint_name, 0.0))
+
+                # Show countdown
+                elapsed = time.time() - neutral_start
+                display = frame.copy()
+                cv2.putText(display, f"Neutral: {2.0-elapsed:.1f}s",
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.imshow("ADAPT-Rehab Calibration", display)
+                cv2.waitKey(1)
+
+            # Collect max ROM (5 seconds)
+            print(f"    Bắt đầu! {instruction} — TỚI TỐI ĐA (5 giây)...")
+            max_angles: List[float] = []
+            max_start = time.time()
+            while time.time() - max_start < 5.0:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame_count += 1
+                ts_ms = int(frame_count * (1000 / fps))
+                result = self.pose_estimator.estimate(frame, ts_ms)
+                if result.is_valid and result.joint_angles:
+                    angle = result.joint_angles.get(joint_name, 0.0)
+                    max_angles.append(angle)
+
+                # Show progress
+                elapsed = time.time() - max_start
+                display = frame.copy()
+                current_angle = max_angles[-1] if max_angles else 0
+                cv2.putText(display, f"{instruction}: {current_angle:.1f} deg ({5.0-elapsed:.1f}s)",
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                cv2.imshow("ADAPT-Rehab Calibration", display)
+                cv2.waitKey(1)
+
+            # Process calibration data
+            if len(max_angles) >= 10:
+                # Apply median filter + outlier removal + P95
+                raw_arr = np.array(max_angles)
+                # Median filter (window=5)
+                from scipy.ndimage import median_filter
+                filtered_arr = median_filter(raw_arr, size=5)
+                # Remove outliers (2 sigma)
+                mean_val = np.mean(filtered_arr)
+                std_val = np.std(filtered_arr)
+                mask = np.abs(filtered_arr - mean_val) <= 2 * std_val
+                clean_arr = filtered_arr[mask]
+                # P95 for max
+                max_angle = float(np.percentile(clean_arr, 95))
+                min_angle = float(np.percentile(clean_arr, 5))
+                confidence = max(0.0, 1.0 - std_val / 30.0)
+
+                joint_limits[joint_name] = JointCalibrationData(
+                    joint_type=joint_name,
+                    max_angle=max_angle,
+                    min_angle=min_angle,
+                    raw_angles=max_angles,
+                    confidence=confidence,
+                    calibration_date=time.strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                print(f"    ✓ {joint_name}: max={max_angle:.1f}°, confidence={confidence:.2f}")
+            else:
+                print(f"    ⚠ {joint_name}: không đủ dữ liệu ({len(max_angles)} frames)")
+
+        # Create UserProfile
+        if joint_limits:
+            profile = UserProfile(
+                user_id=f"user_{int(time.time())}",
+                name=getattr(self.args, "user_name", "User"),
+                age=getattr(self.args, "user_age", 0),
+                joint_limits=joint_limits,
+                last_calibration=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+            # Save to file
+            cal_path = getattr(self.args, "calibration_output", "data/user_profiles/calibration.json")
+            os.makedirs(os.path.dirname(cal_path), exist_ok=True)
+            with open(cal_path, "w", encoding="utf-8") as f:
+                import json
+                json.dump(profile.to_dict(), f, indent=2, ensure_ascii=False)
+            print(f"\n  ✓ Calibration saved to: {cal_path}")
+            print("=" * 60)
+            return profile
+
+        print("\n  ✗ Calibration failed — no valid data")
+        return None
 
     def run(self):
         """Main application loop."""
@@ -205,6 +462,24 @@ class ADAPTRehabV3:
 
         print(f"\nVideo: {w}x{h} @ {fps:.1f} FPS, {total_frames} frames")
         print("Press 'q' to quit, 'r' to reset, 's' to score rep\n")
+
+        # Run calibration if requested (webcam only)
+        if getattr(self.args, "calibrate", False) and source == "webcam":
+            self.user_profile = self.run_calibration(cap, fps)
+            if self.user_profile:
+                # Apply calibration to reference target
+                if self.ref_data:
+                    ref_primary = self.ref_data.get("left_shoulder", np.array([]))
+                    if len(ref_primary) > 0:
+                        ref_max = float(np.max(ref_primary))
+                        user_max = self.user_profile.get_max_angle(
+                            type('JointType', (), {'value': 'left_shoulder'})()
+                        )
+                        if user_max:
+                            scale = compute_scale_factor(user_max, ref_max, 0.05)
+                            self.ref_target_angle = ref_max * scale
+                            print(f"  Personalized target: {self.ref_target_angle:.1f}° "
+                                  f"(scale={scale:.3f})")
 
         self.running = True
         self.session_start_time = time.time()
@@ -403,33 +678,76 @@ class ADAPTRehabV3:
             print(f"[Coach Error] {e}")
 
     def _score_current_rep(self):
-        """Score the current rep from accumulated data."""
+        """Score the current rep from accumulated data.
+
+        When reference video is loaded, uses DTW comparison and reference-based
+        target angle. Otherwise, self-referential scoring (user_max * 1.1).
+        """
         if len(self.angles_history) < 10:
             print("Not enough data for scoring (need >= 10 frames)")
             return
 
-        # Use left shoulder angle as primary, apply Butterworth filter
-        angles_raw = np.array([a.get("left_shoulder", 0) for a in self.angles_history])
-        angles = self.angle_filter.filter(angles_raw)
+        # Extract user angles for all joints
+        joint_names = [
+            "left_shoulder", "right_shoulder",
+            "left_elbow", "right_elbow",
+            "left_hip", "right_hip",
+            "left_knee", "right_knee",
+        ]
+
+        user_joint_angles: Dict[str, np.ndarray] = {}
+        for jname in joint_names:
+            raw = np.array([a.get(jname, 0) for a in self.angles_history])
+            if len(raw) >= 10:
+                user_joint_angles[jname] = self.angle_filter.filter(raw)
+
+        # Primary joint for single-joint scoring
+        angles = user_joint_angles.get("left_shoulder",
+                  np.array([a.get("left_shoulder", 0) for a in self.angles_history]))
+        angles = self.angle_filter.filter(angles)
         ts = np.array(self.timestamps)
-        target = float(np.max(angles)) * 1.1
+
+        # Determine target angle
+        if self.ref_data is not None and self.ref_target_angle > 0:
+            # Reference-based target
+            target = self.ref_target_angle
+        else:
+            # Self-referential fallback
+            target = float(np.max(angles)) * 1.1
+
+        # Build multi-joint dicts for DTW
+        multi_user = {j: user_joint_angles[j] for j in joint_names
+                      if j in user_joint_angles and len(user_joint_angles[j]) >= 5}
+        multi_ref = {j: self.ref_data[j] for j in joint_names
+                     if self.ref_data and j in self.ref_data and len(self.ref_data[j]) >= 5} if self.ref_data else None
 
         score = self.scorer.score_rep(
             angles=angles,
             timestamps=ts,
             target_angle=target,
+            left_angles=user_joint_angles.get("left_shoulder"),
+            right_angles=user_joint_angles.get("right_shoulder"),
             pose_sequence=self.pose_history[-30:],
+            ref_angles=self.ref_data.get("left_shoulder") if self.ref_data else None,
+            ref_left_angles=self.ref_data.get("left_shoulder") if self.ref_data else None,
+            ref_right_angles=self.ref_data.get("right_shoulder") if self.ref_data else None,
+            multi_joint_user=multi_user if multi_ref else None,
+            multi_joint_ref=multi_ref,
         )
 
         self.rep_count += 1
         print(f"\n--- Rep {self.rep_count} ---")
+        print(f"  Target: {target:.1f}° (from {'reference' if self.ref_data else 'self'})")
         print(f"  ROM: {score.rom_score:.1f}")
         print(f"  Stability: {score.stability_score:.1f}")
-        print(f"  Flow: {score.flow_score:.1f}")
+        print(f"  Flow: {score.flow_score:.1f} {'(DTW)' if score.ref_comparison_used else '(velocity)'}")
+        print(f"  Symmetry: {score.symmetry_score:.1f}")
         print(f"  Compensation: {score.compensation_score:.1f}")
         print(f"  Smoothness: {score.smoothness_score:.1f}")
         print(f"  TOTAL: {score.total_score:.1f}/100")
         print(f"  Fatigue: {score.fatigue.name}")
+        if score.ref_comparison_used:
+            print(f"  DTW Similarity: {score.dtw_similarity:.1f}%")
 
         # Reset for next rep
         self.angles_history = []
@@ -477,6 +795,18 @@ def parse_args():
     parser = argparse.ArgumentParser(description="ADAPT-Rehab v3.0")
     parser.add_argument("--source", type=str, default="webcam",
                         help="Video source (webcam or path)")
+    parser.add_argument("--reference", type=str, default=None,
+                        help="Reference exercise video for DTW comparison")
+    parser.add_argument("--calibrate", action="store_true", default=False,
+                        help="Run Safe-Max calibration phase (webcam only)")
+    parser.add_argument("--calibration", type=str, default=None,
+                        help="Path to existing calibration JSON to load")
+    parser.add_argument("--calibration-output", type=str, default="data/user_profiles/calibration.json",
+                        help="Path to save calibration results")
+    parser.add_argument("--user-name", type=str, default="User",
+                        help="User name for calibration profile")
+    parser.add_argument("--user-age", type=int, default=0,
+                        help="User age for calibration profile")
     parser.add_argument("--pose-model", type=str, default=None,
                         help="Path to pose model")
     parser.add_argument("--pose-backend", type=str, default="rtmw3d",
