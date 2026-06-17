@@ -24,6 +24,7 @@
 !/tests/
 !/docs/
 !/.claude/
+!/paper/
 
 # 4. Ignore rules inside Whitelisted Directories
 

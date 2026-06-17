@@ -1,0 +1,48 @@
+% === V. DISCUSSION ===
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Whole-Body Pose Estimation Benefits}
+RTMW3D-L's 133-keypoint output---17 body, 6 foot, 68 face, and 42 hand keypoints---enables simultaneous monitoring of hand gestures for exercise-form verification and facial expressions for pain detection. This whole-body coverage proves valuable for rehabilitation exercises that involve hand placement (e.g., weight-bearing poses) and for detecting compensatory movements through facial grimacing.
+
+On our hardware RTMW3D-L sustains 129.7~FPS on average (median 120.2); its published Human3.6M accuracy is 40.9~mm MPJPE (reported by the model's authors under ground-truth 2D input, not measured by us~\cite{ref_rtmw3d}). The favorable operating point lies in their combination: published accuracy competitive with transformer methods such as MotionBERT (35.2~mm) while running several times faster, which makes whole-body feedback responsive enough for interactive use.
+
+\subsection{Multi-Indicator Facial State Detection}
+The facial state detection pipeline integrates multiple indicators beyond simple AU detection: PSPI-based pain estimation, PERCLOS-based fatigue monitoring, blink and yawn detection, and engagement analysis. Together these provide a more comprehensive assessment of the user's physiological and psychological state during exercise.
+
+The priority-based classification system (Pain $>$ Exhaustion $>$ Fatigue $>$ Boredom $>$ Normal) ensures that critical states receive attention first. Temporal smoothing (mode over the last 90 frames) reduces false positives from transient facial expressions.
+
+\subsection{Clinical Relevance}
+Quaternion-based joint angles address the multi-plane movement limitations of dot-product methods---critical for shoulder and hip rehabilitation where movements span multiple anatomical planes. ISB-convention clinical angles (0 = full extension) align with established clinical measurement practices.
+
+The six-dimension scoring framework provides clinicians with an interpretable, multi-faceted breakdown rather than a single opaque number. All six dimensions and their weights are clinically inspired but have not yet been calibrated against physiotherapist assessments or patient outcomes. The framework functions as a structured, transparent scaffold whose weighting and clinical validation remain open problems.
+
+The cross-skeleton mapping framework enables evaluation against public benchmarks with different skeleton formats (MediaPipe, SMPL-24, Kinect~v2). A common 14-joint evaluation subset and properly specified MPJPE protocols establish a foundation for rigorous comparison with ground-truth annotations.
+
+\subsection{Elderly-Specific Design Choices}
+Several design decisions specifically address elderly user needs: (1)~Wait-for-User synchronization allows unlimited time at each exercise checkpoint, preventing the system from rushing users; (2)~Safe-Max calibration establishes individual ROM limits that constrain exercises to the user's physical capability; (3)~voice guidance with natural-language, respectful address forms accommodates literacy barriers and cultural expectations across deployment contexts; (4)~automatic exercise pause on moderate or severe pain detection provides an unsupervised safety mechanism essential for home-based rehabilitation.
+
+\subsection{Safety Architecture}
+A multi-layered safety approach combines real-time pain monitoring, RAG-grounded LLM coaching with keyword-based guardrails, and ROM-constrained exercise targets. The guardrails filter out contraindicated advice (e.g., ``push through pain'') and the RAG pipeline anchors LLM responses in verified clinical guidelines. This design prioritizes user safety over system autonomy: the system defaults to caution when uncertainty is detected.
+
+\subsection{Computational Performance}
+The modular architecture supports graceful degradation: on lower-end hardware, LLM coaching and compensation detection can be disabled while retaining core pose estimation and scoring. Section~\ref{sec:experiments} reports the full throughput characterization.
+
+\subsection{Limitations}
+\label{subsec:limitations}
+
+Several limitations should be acknowledged:
+
+\textbf{GPU dependency.} RTMW3D-L requires GPU acceleration for real-time performance. CPU-only operation significantly reduces frame rates, potentially affecting feedback quality.
+
+\textbf{Coordinate system.} RTMW3D-L produces relative 3D coordinates, not metric-scale measurements. This limits direct comparison with clinical goniometer measurements without additional calibration or scale estimation.
+
+\textbf{Evaluation scope.} No formal evaluation against ground-truth annotations has been conducted. Cross-dataset evaluation on public benchmarks (UI-PRMD, KIMORE) with annotated joint positions and clinical quality scores is necessary to validate accuracy. Exercise video data used for development comprises adult demonstrators and does not represent the target elderly population.
+
+\textbf{Face analysis limitations.} The geometric AU detection fallback is less accurate than deep learning methods on standard benchmarks. Elderly faces present additional challenges: reduced expressiveness and medication-induced facial masking~\cite{ref_elderly_faces} may affect detection reliability.
+
+\textbf{Infrastructure dependencies.} LLM coaching requires internet connectivity for API access, which may be unavailable in rural areas. Edge-based LLM deployment is planned as future work.
+
+\textbf{Scoring maturity.} The six-dimension scoring framework's weights have not been calibrated against physiotherapist assessments or patient outcomes. The aggregate score has not been validated for exercise discrimination or clinical-rating correlation. The framework should be regarded as an interpretable instrument under development, not a validated clinical measure.
+
+\textbf{Lack of clinical validation.} No user study with elderly participants or clinical validation with physiotherapists has been conducted. The safety guardrails, pain detection pipeline, and LLM coaching have not been tested with the target population. Formal clinical validation is required before deployment.

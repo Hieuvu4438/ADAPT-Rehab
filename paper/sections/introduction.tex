@@ -1,0 +1,23 @@
+% === I. INTRODUCTION ===
+\section{Introduction}
+\label{sec:intro}
+
+The global population aged 60 and above is projected to double by 2050, reaching over 2~billion, while the World Health Organization estimates a shortfall of 10~million skilled health professionals by 2030~\cite{ref_vietnam_aging}. Physical rehabilitation is particularly affected: the physiotherapist-to-population ratio falls below 1 per 100,000 in many low- and middle-income countries~\cite{ref_vietnam_health}, leaving millions of elderly patients without access to supervised exercise therapy for stroke recovery, osteoarthritis, and fall prevention.
+
+Computer vision-based rehabilitation systems show promise in augmenting physiotherapy services~\cite{ref_pose_trainer,ref_aigc_fitness}. Existing systems, however, face several barriers when applied to elderly users: (1)~reliance on expensive depth sensors (Kinect, LiDAR) inaccessible in home settings; (2)~body-only 2D pose estimation that misses hand gestures and facial expressions critical for exercise-form assessment; (3)~absence of natural-language voice interfaces suitable for users with limited digital literacy; (4)~lack of elderly-specific adaptations for reduced mobility, elevated pain sensitivity, and slower exercise tempo; and (5)~generic feedback mechanisms that ignore individual clinical conditions.
+
+We present \system{}, a multimodal AI rehabilitation system that addresses these barriers. We are explicit about scope: this paper is a \emph{systems feasibility} study demonstrating that the integration is computationally practical and architecturally sound, not a clinical validation. Our contributions are:
+
+\begin{enumerate}[itemsep=2pt, topsep=3pt, parsep=0pt]
+    \item \textbf{Elderly-oriented, voice-first design}: A culturally adaptable interface with natural-language voice instructions using respectful address forms, designed for users aged 60+ with varying digital literacy and potential vision or hearing impairments.
+
+    \item \textbf{Real-time whole-body multimodal pipeline}: Integration of RTMW3D-L~\cite{ref_rtmw3d} from MMPose~\cite{ref_mmpose} for direct image-to-3D pose estimation producing 133 keypoints in COCO-WholeBody format (body, foot, face, hands), with quaternion-based joint angle computation. The complete pipeline---pose, facial analysis, scoring, and coaching---sustains 129.7~FPS on a single consumer GPU, our central feasibility result.
+
+    \item \textbf{Multi-indicator facial state detection}: A face analysis pipeline integrating OpenFace~3.0 for Action Unit detection, PSPI-based pain estimation~\cite{ref_pspi}, PERCLOS-based fatigue monitoring~\cite{ref_perclos}, blink and yawn detection, and engagement analysis~\cite{ref_engagement}, with automatic fallback to geometric analysis.
+
+    \item \textbf{Voice-interactive LLM coaching}: Integration of Whisper ASR~\cite{ref_whisper} and Edge-TTS with Large Language Models for natural-language exercise guidance, grounded in clinical knowledge via RAG with safety guardrails.
+
+    \item \textbf{Scoring framework with candid evaluation}: A six-dimension scoring scheme incorporating SPARC smoothness~\cite{ref_sparc}, quaternion kinematics, constrained DTW alignment, and temporal compensation detection, together with an honest assessment on public benchmarks that identifies where it works (exercise-discriminative features) and where it does not yet (aggregate scoring and clinical-rating correlation), defining concrete calibration targets for future work.
+\end{enumerate}
+
+The remainder of this paper is organized as follows: Section~\ref{sec:related} reviews related work. Section~\ref{sec:methodology} details our system architecture and algorithms. Section~\ref{sec:experiments} reports system throughput, temporal stability, ablation, and scoring-framework analysis on public benchmarks. Section~\ref{sec:discussion} discusses design rationale, safety architecture, and limitations. Section~\ref{sec:conclusion} concludes with future directions.

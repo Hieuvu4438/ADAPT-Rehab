@@ -1,0 +1,179 @@
+% === III. METHODOLOGY ===
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{System Architecture}
+\label{subsec:architecture}
+
+\system{} follows a five-stage pipeline architecture (Fig.~\ref{fig:architecture}). The design prioritizes modularity, whole-body coverage, and real-time performance on consumer hardware.
+
+\begin{enumerate}[itemsep=2pt, topsep=3pt, parsep=0pt]
+    \item \textbf{Sensing \& Inputs}: Webcam capture (30~FPS), reference exercise template (angular dataset), and Safe-Max ROM calibration from user profile (age, ROM limits, medical conditions).
+    \item \textbf{Perception}: Whole-body 3D pose estimation via RTMW3D-L~\cite{ref_rtmw3d} (133 keypoints: body + hands + face), face analysis via OpenFace~3.0 (8 AUs + gaze), and Whisper ASR for speech input.
+    \item \textbf{Kinematics \& Alignment}: Quaternion-based joint angle computation, 4th-order Butterworth filtering (6.0~Hz cutoff), and Sakoe-Chiba constrained DTW alignment.
+    \item \textbf{Evaluation}: Six-dimension scoring (ROM, stability, flow, symmetry, compensation, smoothness), compensation detection (shoulder hiking, trunk lean, hip shift), and multi-indicator fatigue analysis.
+    \item \textbf{Coaching \& HUD}: LLM coaching with RAG grounding, safety guardrails, Edge-TTS voice synthesis, and visual overlay (skeleton with angle arcs, real-time metrics dashboard, session reports).
+\end{enumerate}
+
+\begin{figure*}[t]
+    \centering
+    \input{figures/fig1_architecture_body.tex}
+    \caption{\system{} system architecture. Five pipeline stages process data from Sensing \& Inputs (camera, reference template, Safe-Max ROM calibration) through Perception (RTMW3D-L whole-body 3D pose, OpenFace~3.0 AUs, Whisper ASR) and Kinematics \& Alignment (quaternion angles, Butterworth filtering, constrained DTW) to Evaluation (6-D scoring, compensation detection, fatigue analysis) and Coaching \& HUD (LLM coach with RAG safety guardrails, Edge-TTS, visual overlay). Red dashed feedback arcs enable real-time pain/fatigue alerts to dynamically adjust coaching.}
+    \label{fig:architecture}
+\end{figure*}
+
+The architecture supports graceful degradation: if the LLM API is unreachable, the coaching module uses rule-based text feedback; the face analysis pipeline automatically falls back from OpenFace~3.0 to geometric analysis based on available dependencies.
+
+\subsection{Whole-Body 3D Pose Estimation}
+\label{subsec:pose3d}
+
+We adopt RTMW3D-L~\cite{ref_rtmw3d} from MMPose~\cite{ref_mmpose} for real-time whole-body 3D pose estimation. RTMW3D-L employs a top-down Cascade Top-Down framework with a CSPNeXt backbone, CSPNeXtPAFPN neck, and RTMWHead that predicts both 2D heatmaps and 3D relative coordinates.
+
+The model produces 133 keypoints directly from RGB images:
+\begin{equation}
+    \mathbf{P}_{3D} = f_{\text{RTMW3D-L}}(\mathbf{I}) \in \mathbb{R}^{133 \times 3}
+    \label{eq:rtmw3d}
+\end{equation}
+where the output follows COCO-WholeBody format: body joints (indices 0--16, 17 points), foot keypoints (17--22, 6 points), face landmarks (23--90, 68 points in dlib convention), left hand (91--111, 21 points), and right hand (112--132, 21 points).
+
+The model is pre-trained on the COCO-WholeBody dataset and fine-tuned on the Cocktail-14 multi-person 3D dataset. For inference we use the MMPose \texttt{inference\_topdown} API with PyTorch backend, achieving 129.7~FPS on an NVIDIA RTX 5880 Ada Generation GPU.
+
+For joint angle computation we use the body keypoints (indices 0--16) in COCO format. Given three consecutive joints $\mathbf{a}$, $\mathbf{b}$, $\mathbf{c}$ forming an angle at $\mathbf{b}$, the dot-product angle is:
+\begin{equation}
+    \theta_{\text{dot}} = \arccos\left(\frac{(\mathbf{a} - \mathbf{b}) \cdot (\mathbf{c} - \mathbf{b})}{\|\mathbf{a} - \mathbf{b}\| \|\mathbf{c} - \mathbf{b}\|}\right) \cdot \frac{180}{\pi}
+    \label{eq:angle_dot}
+\end{equation}
+
+The system computes angles for 8 bilateral joint pairs: shoulders, elbows, hips, and knees.
+
+\subsection{Quaternion-Based Joint Angle Computation}
+\label{subsec:quaternion}
+
+Traditional dot-product angle computation is limited to the plane defined by three joints. We implement quaternion-based joint angles for multi-plane accuracy~\cite{ref_quaternion_angles}, using the Melax~(1998) robust formulation.
+
+Given two limb segments with direction vectors $\mathbf{v}_1$ and $\mathbf{v}_2$, we compute:
+\begin{equation}
+    s = \sqrt{2(1 + \mathbf{v}_1 \cdot \mathbf{v}_2)}, \quad w = \frac{s}{2}, \quad \theta = 2 \arccos(w)
+    \label{eq:quaternion}
+\end{equation}
+
+This sqrt-based formulation avoids numerical issues of direct $\arccos$ near 0 and 180 degrees. The system also implements ISB-convention clinical angles~\cite{ref_isb}: for flexion joints, $\theta_{\text{clinical}} = 180 - \theta_{\text{included}}$ (0 = full extension).
+
+\begin{figure}[htbp]
+    \centering
+    \input{figures/fig_safemax_calibration.tex}
+    \caption{Safe-Max ROM calibration profile showing raw tracking signal with elderly tremor (light gray), median-filtered signal (royal blue), outlier rejection boundaries ($\pm 2\sigma$), and the P95 target threshold ($\theta_{\text{user\_max}}$) derived from the 95th percentile of filtered peak angles.}
+    \label{fig:safemax_calibration}
+\end{figure}
+
+\subsection{SPARC Smoothness Metric}
+\label{subsec:sparc}
+
+Movement smoothness is a clinically validated marker of motor control quality~\cite{ref_sparc}. We adopt the Spectral Arc Length (SPARC) metric following Balasubramanian et al.~(2012).
+
+SPARC computes the arc length of the normalized Fourier magnitude spectrum of the velocity profile up to a cutoff frequency $\omega_c$:
+\begin{equation}
+    \text{SPARC} = -\int_0^{\omega_c} \sqrt{\left(\frac{d\bar{\omega}}{\omega_c}\right)^2 + \left(\frac{d\hat{V}(\omega)}{d\omega}\right)^2} d\omega
+    \label{eq:sparc}
+\end{equation}
+where $\hat{V}(\omega)$ is the peak-normalized magnitude spectrum and $\omega_c$ is determined adaptively (threshold = 0.05).
+
+SPARC lies in $[-6, 0]$ with more negative values indicating smoother movements. We normalize to $[0, 100]$: $\text{score} = (\text{SPARC} + 6) / 6 \times 100$. The smoothness score combines SPARC (60\%) and Log-Dimensionless Jerk (LDLJ~\cite{ref_ldlj}, 40\%) for a robust composite.
+
+\begin{figure}[htbp]
+    \centering
+    \input{figures/fig_sparc_spectrum.tex}
+    \caption{SPARC frequency-domain smoothness comparison. The smooth healthy movement (green) exhibits a single sharp peak with rapid decay, while the tremor/impaired movement (red) shows multiple high-frequency harmonic spikes. The cutoff frequency $\omega_c$ is set where the spectrum crosses the 0.05 threshold.}
+    \label{fig:sparc_spectrum}
+\end{figure}
+
+\subsection{Multi-Indicator Facial State Detection}
+\label{subsec:pain}
+
+Our face analysis pipeline detects five facial states (Normal, Pain, Fatigue, Exhaustion, Boredom) in priority order: Pain, then Exhaustion, then Fatigue, then Boredom, then Normal.
+
+\textbf{Face Detection}: Face keypoints come directly from RTMW3D's 133-keypoint output (COCO-WholeBody format, indices 23--90), providing 68 face landmarks in dlib convention. No separate face detection model is necessary---face, body, and hand keypoints are produced in a single inference pass, ensuring temporal consistency and reducing computational overhead.
+
+\textbf{Action Unit Detection}: OpenFace~3.0 detects 8 Action Units (AU1, AU2, AU4, AU6, AU9, AU12, AU25, AU26) and 8 emotions (AffectNet classes). When OpenFace~3.0 is unavailable, the system falls back to geometric analysis of Face Mesh landmarks.
+
+\textbf{Pain Intensity Estimation}: We adopt a PSPI-inspired index~\cite{ref_pspi} adapted to the available Action Units:
+\begin{equation}
+    \widetilde{\text{PSPI}} = \text{AU4} + 2 \cdot \text{AU6} + \text{AU9} + 2 \cdot \text{AU43}_{\text{approx}}
+    \label{eq:pspi}
+\end{equation}
+where $\text{AU43}_{\text{approx}}$ (eye closure) is estimated from the Eye Aspect Ratio (EAR~\cite{ref_ear}). Intensity levels: None (0), Mild (1), Moderate (3), Strong (6), Severe (10).
+
+\textbf{Fatigue Detection}: A composite score combines four weighted indicators:
+\begin{equation}
+    F = 0.35\,P_c + 0.25\,R_b + 0.25\,D_b + 0.15\,R_y
+    \label{eq:fatigue}
+\end{equation}
+where $P_c$ is PERCLOS~\cite{ref_perclos} (\% eye closure over 60~s), $R_b$ is blink rate (normal: 15--20/min), $D_b$ is mean blink duration, and $R_y$ is yawn frequency. Thresholds: Alert ($F<0.3$), Mild ($F<0.5$), Fatigued ($F<0.7$), Exhaustion ($F\geq 0.85$).
+
+\textbf{Engagement Detection}: Based on Whitehill et al.~(2014)~\cite{ref_engagement}:
+\begin{equation}
+    E = \alpha \cdot \text{AU12} - \gamma \cdot \text{AU1} + \delta
+    \label{eq:engagement}
+\end{equation}
+with boredom index from D'Mello \& Graesser~(2010) based on low AU variability and prolonged neutral state.
+
+\textbf{Blink and Yawn Detection}: Blinks are detected as brief EAR drops ($<$300ms) below threshold (0.2). Yawns are detected from AU25 (Lips Part) + AU26 (Jaw Drop) active simultaneously for $\geq$2 seconds.
+
+\subsection{Voice-Interactive LLM Coaching}
+\label{subsec:llm}
+
+The coaching system integrates three components:
+\begin{itemize}[itemsep=2pt, topsep=3pt, parsep=0pt]
+    \item \textbf{LLM}: Large Language Models with RAG grounding from a clinical rehabilitation knowledge base covering exercise guidelines, contraindications, and region-specific healthcare context. The LLM receives structured context including exercise name, current phase, joint angle deviations, pain/fatigue levels, and user profile (age, ROM limits, medical conditions).
+    \item \textbf{TTS}: Edge-TTS with neural voices for natural speech synthesis in the user's preferred language, converting LLM-generated coaching text to spoken feedback.
+    \item \textbf{Safety}: Guardrails block harmful advice (e.g., ``ignore pain'', ``push through'') and check contraindications based on user profile.
+\end{itemize}
+
+A priority system ensures pain alerts are delivered immediately, followed by fatigue warnings, performance feedback, and encouragement. A 5-second cooldown between LLM calls prevents excessive API usage.
+
+\subsection{Advanced Scoring Framework}
+\label{subsec:scoring}
+
+The scoring system evaluates exercises across six dimensions with clinically-inspired weights:
+
+\begin{table}[htbp]
+    \caption{Scoring Dimensions and Weights}
+    \label{tab:scoring}
+    \centering
+    \begin{tabular}{lcl}
+        \toprule
+        \textbf{Dimension} & \textbf{Wt.} & \textbf{Metric} \\
+        \midrule
+        ROM Accuracy & 25\% & Max angle vs target \\
+        Stability & 15\% & Angle variance \\
+        Flow & 20\% & Velocity smoothness \\
+        Symmetry & 15\% & L-R angle diff. \\
+        Compensation & 15\% & Temporal detection \\
+        Smoothness & 10\% & SPARC metric \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Constrained DTW}: We apply the Sakoe-Chiba band constraint to prevent pathological alignments:
+\begin{equation}
+    w = \max\left(\lfloor \max(n,m) \times 0.1 \rfloor, |n - m|\right)
+    \label{eq:dtw_constraint}
+\end{equation}
+
+\begin{figure}[htbp]
+    \centering
+    \input{figures/fig_dtw_warping.tex}
+    \caption{Sakoe-Chiba constrained DTW warping path. The shaded diagonal corridor (light blue) represents the constraint band of width $2w+1$, limiting the search space. The optimal warping path (red) aligns reference and user sequences monotonically while remaining within the constraint boundary.}
+    \label{fig:dtw_warping}
+\end{figure}
+
+\textbf{Compensation Detection}: Temporal analysis of joint angle sequences identifies three types of compensatory movements: shoulder hiking (threshold: 5\% of frame height), trunk lean (threshold: 15$^\circ$), and hip shift (threshold: 6\% of frame height). Severity is computed as $\min(1, \text{max\_value} / (2 \cdot \text{threshold}))$.
+
+\subsection{Cross-Skeleton Evaluation Framework}
+\label{subsec:skeleton_mapping}
+
+To enable evaluation against public benchmarks with different skeleton formats, we implement a comprehensive skeleton mapping system. The framework maps between three common skeleton types: MediaPipe (33 landmarks), SMPL-24 (24 joints), and Kinect~v2 (25 joints, used in UI-PRMD~\cite{ref_uiprmd}).
+
+For cross-skeleton comparison, we define a common 14-joint evaluation subset (pelvis, spine, neck, head, and bilateral shoulder, elbow, wrist, hip, knee, ankle) that exists in all three skeletons. The mapping functions handle derived joints (e.g., pelvis = average of left/right hip) and index remapping.
+
+The framework implements two standard MPJPE protocols so that future ground-truth evaluation can follow established conventions: Protocol~1 (root-aligned mean per-joint L2 distance) and Protocol~2 (PA-MPJPE, Procrustes-aligned via SVD over translation, rotation, and scale). It also provides an ICC(3,1) reliability routine (two-way mixed model, single measures) following Koo \& Li~(2016)~\cite{ref_icc}. In this paper these protocols are exercised only for self-consistency profiling; applying them against annotated ground truth is left to future work.

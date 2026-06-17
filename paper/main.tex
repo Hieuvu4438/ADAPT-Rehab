@@ -1,0 +1,111 @@
+% ADAPT-Rehab: Multimodal AI Rehabilitation System for Elderly Vietnamese Users
+% Target: ATC 2026 - International Conference on Advanced Technologies for Communications
+% IEEE Format, 6 pages maximum, Blind Review Version
+
+\documentclass[conference]{IEEEtran}
+
+% === PACKAGES ===
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{balance}
+\usepackage{standalone}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{fillbetween}
+\usepackage[T1]{fontenc}
+%\usepackage[scaled]{helvet}
+\usetikzlibrary{positioning,arrows.meta,calc,shapes.geometric,fit,backgrounds,patterns}
+%\renewcommand{\familydefault}{\sfdefault}
+\usepackage{hyperref}
+
+% === FIGURE 1 PALETTE (A* two-accent) ===
+\definecolor{AccentBlue}{HTML}{1F4E79}
+\definecolor{AccentBlueFill}{HTML}{D9E2F3}
+\definecolor{AccentRed}{HTML}{C0392B}
+\definecolor{AccentRedFill}{HTML}{FADBD8}
+\definecolor{NeutralBorder}{HTML}{2C3E50}
+\definecolor{NeutralColFill}{HTML}{F4F6F7}
+\definecolor{NeutralMid}{HTML}{566573}
+\definecolor{TextMain}{HTML}{1B2631}
+\definecolor{TextSub}{HTML}{566573}
+\definecolor{White}{HTML}{FFFFFF}
+
+% === FIGURE 2-4 COLORS (Technical diagrams) ===
+\definecolor{RoyalBlue}{RGB}{65,105,225}
+\definecolor{BrickRed}{RGB}{178,34,34}
+\definecolor{ForestGreen}{RGB}{34,139,34}
+\definecolor{LightGray}{RGB}{211,211,211}
+\definecolor{LightBlue}{RGB}{173,216,230}
+
+% === CUSTOM COMMANDS ===
+\newcommand{\system}{\textsc{ADAPT-Rehab}}
+
+% === TITLE AND AUTHORS ===
+% BLIND REVIEW VERSION: Author information removed
+% For camera-ready, uncomment the author block below
+\title{ADAPT-Rehab: A Multimodal AI System for Real-Time\\Elderly Rehabilitation with Whole-Body 3D Pose\\Estimation and Voice-Interactive LLM Coaching}
+
+% BLIND REVIEW: Remove author information for submission
+\author{
+\IEEEauthorblockN{Anonymous Author 1}
+\IEEEauthorblockA{Anonymous Institution\\Anonymous City, Country\\Email: anonymous@email.com}
+\and
+\IEEEauthorblockN{Anonymous Author 2}
+\IEEEauthorblockA{Anonymous Institution\\Anonymous City, Country}
+}
+
+% CAMERA-READY VERSION: Uncomment below for final version
+%\author{
+%\IEEEauthorblockN{Vu Dinh Hieu}
+%\IEEEauthorblockA{Posts and Telecommunications Institute of Technology\\Hanoi, Vietnam\\Email: HieuVD.B23CE036@stu.ptit.edu.vn}
+%\and
+%\IEEEauthorblockN{Nguyen Van Hinh}
+%\IEEEauthorblockA{Posts and Telecommunications Institute of Technology\\Hanoi, Vietnam}
+%}
+
+\begin{document}
+
+\maketitle
+
+% === SECTIONS ===
+\input{sections/abstract}
+\input{sections/introduction}
+\input{sections/related_work}
+\input{sections/methodology}
+\input{sections/experiments}
+\input{sections/discussion}
+\input{sections/conclusion}
+
+% === REQUIRED IEEE STATEMENTS ===
+\section*{Ethics Statement}
+This work is a systems feasibility study and did not involve a human-subjects experiment conducted by the authors. The evaluation uses pre-existing adult yoga-exercise videos and publicly available rehabilitation benchmark datasets (UI-PRMD, KIMORE); no elderly participants were recruited and no clinical study was performed, so no new institutional ethics approval was required for the results reported here. Only skeletal keypoints and facial landmark coordinates are processed; no raw video is redistributed. Any future deployment or clinical evaluation with elderly participants will require informed consent and institutional ethics-board approval prior to data collection. The system is designed with safety guardrails intended to reduce harm during unsupervised home use, including automatic exercise pause on pain detection and contraindication checking based on user profiles; these mechanisms have not yet been clinically validated.
+
+\section*{Conflict of Interest Statement}
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+% BLIND REVIEW: Author Contributions omitted to preserve anonymity.
+% For camera-ready, uncomment:
+% \section*{Author Contributions}
+% Author 1: Conceptualization, Methodology, Software, Writing - Original Draft.
+% Author 2: Supervision, Validation, Writing - Review \& Editing.
+
+\section*{Data Availability}
+The codebase and evaluation framework will be released publicly upon acceptance (repository URL omitted for blind review). The yoga exercise videos used for profiling are available from the corresponding author upon reasonable request. The clinical knowledge base used for RAG grounding is included in the repository.
+
+\section*{Acknowledgment}
+The authors thank the anonymous reviewers for their constructive feedback.
+
+% === REFERENCES ===
+\balance
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

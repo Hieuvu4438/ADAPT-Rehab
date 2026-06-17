@@ -1,0 +1,156 @@
+% =============================================================================
+%  ADAPT-Rehab -- IEEE Double-Column Horizontal System Workflow Diagram
+%  Compile: pdflatex fig1_architecture.tex
+% =============================================================================
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[scaled]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.misc}
+% --- Custom IEEE Color Palette (Hex Codes) -----------------------------------
+\definecolor{AccentBlue}{HTML}{1F4E79}
+\definecolor{AccentBlueFill}{HTML}{D9E2F3}
+\definecolor{AccentRed}{HTML}{C0392B}
+\definecolor{AccentRedFill}{HTML}{FADBD8}
+\definecolor{NeutralBorder}{HTML}{2C3E50}
+\definecolor{NeutralColFill}{HTML}{F4F6F7}
+\definecolor{NeutralMid}{HTML}{566573}
+\definecolor{TextMain}{HTML}{1B2631}
+\definecolor{TextSub}{HTML}{566573}
+\definecolor{White}{HTML}{FFFFFF}
+% --- Layout Constants --------------------------------------------------------
+\newcommand{\colW}{3.5}     % Column width
+\newcommand{\colH}{7.8}     % Column height
+\newcommand{\colGap}{0.55}  % Column horizontal gap
+\newcommand{\boxW}{3.1}     % Box width
+\newcommand{\boxH}{1.0}     % Box height
+\newcommand{\titleH}{0.6}   % Column title height
+% --- Component Box Helper Macro ----------------------------------------------
+\newcommand{\compbox}[5][]{%
+  \node[rounded corners=4pt, draw=NeutralBorder, line width=1pt,
+        fill=White, minimum width=\boxW cm, minimum height=\boxH cm,
+        align=center, text=TextMain, font=\bfseries\small, #1]
+        (tmp) at (#2,#3) {};
+  \node[align=center, text=TextMain, font=\bfseries\footnotesize]
+        at ($(tmp.north)+(0,-0.3)$) {#4};
+  \node[align=center, text=TextSub, font=\scriptsize\itshape]
+        at ($(tmp.south)+(0,0.3)$) {#5};
+}
+\begin{document}
+\begin{tikzpicture}[
+    >={Stealth[length=6pt,width=5pt]},
+    column/.style={
+        rounded corners=5pt, draw=NeutralMid, line width=1pt,
+        fill=NeutralColFill, minimum width=\colW cm, minimum height=\colH cm,
+        inner sep=0pt, anchor=south west
+    },
+    perceptionColumn/.style={
+        rounded corners=5pt, draw=AccentBlue, line width=1.6pt,
+        fill=AccentBlueFill, minimum width=\colW cm, minimum height=\colH cm,
+        inner sep=0pt, anchor=south west
+    },
+    titleBar/.style={
+        rounded corners=4pt, draw=AccentBlue, line width=0.9pt,
+        fill=AccentBlue, minimum width=\colW cm, minimum height=\titleH cm,
+        align=center, text=White, font=\bfseries\small, anchor=south west
+    },
+    titleBarNeutral/.style={
+        rounded corners=4pt, draw=NeutralMid, line width=0.9pt,
+        fill=NeutralMid, minimum width=\colW cm, minimum height=\titleH cm,
+        align=center, text=White, font=\bfseries\small, anchor=south west
+    }
+  ]
+  % --- Column coordinates (5 Columns) ---
+  \def\xA{0}
+  \def\xB{\colW+\colGap}
+  \def\xC{2*(\colW+\colGap)}
+  \def\xD{3*(\colW+\colGap)}
+  \def\xE{4*(\colW+\colGap)}
+  \def\yTop{0}
+  \def\yBot{-\colH}
+  % --- Background Columns ---
+  \node[column]            (C1) at (\xA, \yBot) {};
+  \node[perceptionColumn]  (C2) at (\xB, \yBot) {};
+  \node[column]            (C3) at (\xC, \yBot) {};
+  \node[column]            (C4) at (\xD, \yBot) {};
+  \node[column]            (C5) at (\xE, \yBot) {};
+  % --- Column Header Titles ---
+  \node[titleBarNeutral]   (T1) at (\xA, \yTop-\titleH) {1. SENSING \& INPUTS};
+  \node[titleBar]          (T2) at (\xB, \yTop-\titleH) {2. PERCEPTION};
+  \node[titleBarNeutral]   (T3) at (\xC, \yTop-\titleH) {3. KINEMATICS \& ALIGN};
+  \node[titleBarNeutral]   (T4) at (\xD, \yTop-\titleH) {4. EVALUATION};
+  \node[titleBarNeutral]   (T5) at (\xE, \yTop-\titleH) {5. COACHING \& HUD};
+  % --- Modality dividers in Perception Column (Dashed hairlines) ---
+  \draw[NeutralMid, line width=0.6pt, dash pattern=on 3pt off 3pt]
+       ($(C2.north west)+(0.15,-2.5)$) -- ($(C2.north east)+(-0.15,-2.5)$);
+  \draw[NeutralMid, line width=0.6pt, dash pattern=on 3pt off 3pt]
+       ($(C2.north west)+(0.15,-4.9)$) -- ($(C2.north east)+(-0.15,-4.9)$);
+  % Modality Label tags inside Perception
+  \node[font=\scriptsize\bfseries\itshape, text=AccentBlue, anchor=east]
+       at ($(C2.north east)+(-0.12,-0.95)$) {Body};
+  \node[font=\scriptsize\bfseries\itshape, text=AccentBlue, anchor=east]
+       at ($(C2.north east)+(-0.12,-3.0)$) {Face};
+  \node[font=\scriptsize\bfseries\itshape, text=AccentBlue, anchor=east]
+       at ($(C2.north east)+(-0.12,-5.3)$) {Audio};
+  % ===========================================================================
+  %  STAGE COMPONENT BOXES
+  % ===========================================================================
+  % --- Column 1 -- SENSING & INPUTS ---
+  \compbox{\xA+\colW/2}{-1.75}{User Video / Webcam}{30 FPS RGB Frame Stream}
+  \compbox{\xA+\colW/2}{-3.85}{Reference Template}{Exercise Angular Dataset}
+  \compbox{\xA+\colW/2}{-5.95}{Safe-Max ROM Calibration}{2s Neutral + 5s Max ($P_{95}$)}
+  % --- Column 2 -- PERCEPTION ---
+  \compbox{\xB+\colW/2}{-1.75}{RTMW3D-L Model}{133 3D Keypoint Extraction}
+  \compbox{\xB+\colW/2}{-3.85}{OpenFace 3.0 Engine}{Action Units (8 AUs) + Gaze}
+  \compbox{\xB+\colW/2}{-5.95}{Whisper ASR Model}{Speech-to-Text Fallback}
+  % --- Column 3 -- KINEMATICS & ALIGN ---
+  \compbox{\xC+\colW/2}{-1.75}{Quaternion Kinematics}{Melax Robust included angle}
+  \compbox{\xC+\colW/2}{-3.85}{Butterworth Filter}{4th-Order, 6.0 Hz Cutoff}
+  \compbox{\xC+\colW/2}{-5.95}{Constrained DTW}{Sakoe-Chiba Band (15\% width)}
+  % --- Column 4 -- EVALUATION ---
+  \compbox{\xD+\colW/2}{-1.75}{6-Dimension Scorer}{ROM (25\%) + Stability (15\%)}
+  \compbox{\xD+\colW/2}{-3.85}{Compensation Detector}{Shoulder Hiking + Trunk Lean}
+  \compbox{\xD+\colW/2}{-5.95}{Fatigue Analyzer}{Jerk Ratio + ROM Degradation}
+  % --- Column 5 -- COACHING & HUD ---
+  \compbox{\xE+\colW/2}{-1.75}{LLM Coach \& RAG}{Clinical KB + Safety Guardrails}
+  \compbox{\xE+\colW/2}{-3.85}{Edge-TTS Speech Synth}{vi-VN-HoaiMyNeural Voice}
+  \compbox{\xE+\colW/2}{-5.95}{Visual HUD \& Dashboard}{2D skeleton overlay + ROM arcs}
+  % ===========================================================================
+  %  ROUTING / CONNECTION ARROWS
+  % ===========================================================================
+
+  % Main Flow Arrows (y = -3.2)
+  \draw[NeutralMid, line width=1.5pt, -{Stealth[length=6pt,width=5pt]}]
+       ($(C1.east)+(0,-3.2)$) -- ($(C2.west)+(0,-3.2)$);
+  \draw[NeutralMid, line width=1.5pt, -{Stealth[length=6pt,width=5pt]}]
+       ($(C2.east)+(0,-3.2)$) -- ($(C3.west)+(0,-3.2)$);
+  \draw[NeutralMid, line width=1.5pt, -{Stealth[length=6pt,width=5pt]}]
+       ($(C3.east)+(0,-3.2)$) -- ($(C4.west)+(0,-3.2)$);
+  \draw[NeutralMid, line width=1.5pt, -{Stealth[length=6pt,width=5pt]}]
+       ($(C4.east)+(0,-3.2)$) -- ($(C5.west)+(0,-3.2)$);
+  % Arrow Labels
+  \node[font=\scriptsize\bfseries, text=TextMain, fill=White, inner sep=1.5pt]
+       at ($(C1.east)!0.5!(C2.west) + (0,0.25)$) {RGB feed};
+  \node[font=\scriptsize\bfseries, text=TextMain, fill=White, inner sep=1.5pt]
+       at ($(C2.east)!0.5!(C3.west) + (0,0.25)$) {Keypoints};
+  \node[font=\scriptsize\bfseries, text=TextMain, fill=White, inner sep=1.5pt]
+       at ($(C3.east)!0.5!(C4.west) + (0,0.25)$) {Aligned Angles};
+  \node[font=\scriptsize\bfseries, text=TextMain, fill=White, inner sep=1.5pt]
+       at ($(C4.east)!0.5!(C5.west) + (0,0.25)$) {6-D Scores};
+  % Internal Module Sub-routing Arrows
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C1.east)+(0,-5.95)$) -- +(0.15,0) |- ($(C3.west)+(0,-5.95)$);
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C2.east)+(0,-1.75)$) -- ($(C3.west)+(0,-1.75)$);
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C2.east)+(0,-3.85)$) -- +(0.15,0) |- ($(C3.west)+(0,-4.5)$);
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C3.east)+(0,-1.75)$) -- ($(C4.west)+(0,-1.75)$);
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C3.east)+(0,-5.95)$) -- +(0.15,0) |- ($(C4.west)+(0,-5.95)$);
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C4.east)+(0,-1.75)$) -- ($(C5.west)+(0,-1.75)$);
+  \draw[NeutralMid, line width=0.8pt, ->] ($(C4.east)+(0,-5.95)$) -- +(0.15,0) |- ($(C5.west)+(0,-5.95)$);
+  % Active feedback loops (Pain/Fatigue alerts to Coach, red dashed line)
+  \coordinate (FBstart) at ($(C5.south)+(0,-0.12)$);
+  \coordinate (FBend)   at ($(C4.south)+(0,-0.12)$);
+  \draw[AccentRed, line width=1.4pt, dash pattern=on 5pt off 4pt, -{Stealth[length=6pt,width=5pt]}]
+        (FBstart) .. controls +(0,-1.3) and +(0,-1.3) .. (FBend);
+  \node[font=\scriptsize\bfseries\itshape, text=AccentRed, fill=White, inner sep=2pt]
+        at ($(FBstart)!0.5!(FBend)+(0,-1.1)$) {Pain \& Fatigue Loop $\rightarrow$ Dynamic Coach Adjust};
+\end{tikzpicture}
+\end{document}
