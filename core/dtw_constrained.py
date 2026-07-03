@@ -150,16 +150,23 @@ def weighted_constrained_dtw(
         if weight < 1e-6:
             continue
 
-        # Normalize sequences
-        user_norm = _normalize(user_seq)
-        ref_norm = _normalize(ref_seqs[joint])
+        # Mean-center both trajectories and scale by reference amplitude (ROM).
+        # This removes absolute position offset while preserving amplitude info.
+        # If user has same ROM as ref → both span [-0.5, 0.5] → low distance.
+        # If user has less ROM → user spans smaller range → higher distance.
+        user_arr = np.array(user_seq, dtype=np.float64)
+        ref_arr = np.array(ref_seqs[joint], dtype=np.float64)
+        ref_centered = ref_arr - np.mean(ref_arr)
+        ref_amp = max(np.max(ref_centered) - np.min(ref_centered), 1e-6)
+        user_norm = (user_arr - np.mean(user_arr)) / ref_amp
+        ref_norm = ref_centered / ref_amp
 
         # Compute constrained DTW
         dist, path = constrained_dtw(user_norm, ref_norm, window_percent)
 
-        # Normalize by sequence length
-        seq_len = max(len(user_seq), len(ref_seqs[joint]))
-        normalized_dist = dist / seq_len if seq_len > 0 else 0
+        # Normalize by path length for per-frame average distance
+        path_len = max(len(path), 1)
+        normalized_dist = dist / path_len
 
         total_weighted_dist += weight * normalized_dist
         total_weight += weight
@@ -173,17 +180,11 @@ def weighted_constrained_dtw(
 
     final_dist = total_weighted_dist / total_weight if total_weight > 0 else 0.0
 
-    # Convert to similarity score (0-100)
-    similarity = 100.0 * np.exp(-final_dist * 3)
+    # Convert per-frame distance to similarity.
+    # In amplitude-normalized units, identical=0, similar=0.05-0.15,
+    # moderately different=0.2-0.4, very different=0.5+.
+    # Use exp(-d*5): d=0→100, d=0.1→61, d=0.2→37, d=0.5→8.
+    similarity = 100.0 * float(np.exp(-final_dist * 5.0))
     similarity = float(np.clip(similarity, 0, 100))
 
     return similarity, final_dist, details
-
-
-def _normalize(seq) -> np.ndarray:
-    """Normalize sequence to [0, 1]."""
-    arr = np.array(seq, dtype=np.float64)
-    min_val, max_val = arr.min(), arr.max()
-    if max_val - min_val > 1e-6:
-        arr = (arr - min_val) / (max_val - min_val)
-    return arr

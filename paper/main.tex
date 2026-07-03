@@ -14,13 +14,13 @@
 \usepackage{multirow}
 \usepackage{url}
 \usepackage{balance}
-\usepackage{standalone}
 \usepackage{enumitem}
 \usepackage{tikz}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \usepgfplotslibrary{fillbetween}
 \usepackage[T1]{fontenc}
+\emergencystretch=0.5em
 %\usepackage[scaled]{helvet}
 \usetikzlibrary{positioning,arrows.meta,calc,shapes.geometric,fit,backgrounds,patterns}
 %\renewcommand{\familydefault}{\sfdefault}
@@ -31,6 +31,8 @@
 \definecolor{AccentBlueFill}{HTML}{D9E2F3}
 \definecolor{AccentRed}{HTML}{C0392B}
 \definecolor{AccentRedFill}{HTML}{FADBD8}
+\definecolor{OutputGreen}{HTML}{27AE60}
+\definecolor{OutputGreenFill}{HTML}{EAFAF1}
 \definecolor{NeutralBorder}{HTML}{2C3E50}
 \definecolor{NeutralColFill}{HTML}{F4F6F7}
 \definecolor{NeutralMid}{HTML}{566573}
@@ -51,16 +53,10 @@
 % === TITLE AND AUTHORS ===
 % BLIND REVIEW VERSION: Author information removed
 % For camera-ready, uncomment the author block below
-\title{ADAPT-Rehab: A Multimodal AI System for Real-Time\\Elderly Rehabilitation with Whole-Body 3D Pose\\Estimation and Voice-Interactive LLM Coaching}
+\title{ADAPT-Rehab: A Multimodal Rehabilitation Support System\\with Whole-Body 3D Pose Estimation and\\a Cross-Dataset Constrained-DTW Scoring Framework}
 
 % BLIND REVIEW: Remove author information for submission
-\author{
-\IEEEauthorblockN{Anonymous Author 1}
-\IEEEauthorblockA{Anonymous Institution\\Anonymous City, Country\\Email: anonymous@email.com}
-\and
-\IEEEauthorblockN{Anonymous Author 2}
-\IEEEauthorblockA{Anonymous Institution\\Anonymous City, Country}
-}
+
 
 % CAMERA-READY VERSION: Uncomment below for final version
 %\author{
@@ -76,32 +72,14 @@
 \maketitle
 
 % === SECTIONS ===
-\input{sections/abstract}
-\input{sections/introduction}
-\input{sections/related_work}
-\input{sections/methodology}
-\input{sections/experiments}
-\input{sections/discussion}
-\input{sections/conclusion}
+\input{sections/0. abstract}
+\input{sections/1. introduction}
+\input{sections/2. related_work}
+\input{sections/3. methodology}
+\input{sections/4. experiments}
+\input{sections/5. discussion}
+\input{sections/6. conclusion}
 
-% === REQUIRED IEEE STATEMENTS ===
-\section*{Ethics Statement}
-This work is a systems feasibility study and did not involve a human-subjects experiment conducted by the authors. The evaluation uses pre-existing adult yoga-exercise videos and publicly available rehabilitation benchmark datasets (UI-PRMD, KIMORE); no elderly participants were recruited and no clinical study was performed, so no new institutional ethics approval was required for the results reported here. Only skeletal keypoints and facial landmark coordinates are processed; no raw video is redistributed. Any future deployment or clinical evaluation with elderly participants will require informed consent and institutional ethics-board approval prior to data collection. The system is designed with safety guardrails intended to reduce harm during unsupervised home use, including automatic exercise pause on pain detection and contraindication checking based on user profiles; these mechanisms have not yet been clinically validated.
-
-\section*{Conflict of Interest Statement}
-The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
-
-% BLIND REVIEW: Author Contributions omitted to preserve anonymity.
-% For camera-ready, uncomment:
-% \section*{Author Contributions}
-% Author 1: Conceptualization, Methodology, Software, Writing - Original Draft.
-% Author 2: Supervision, Validation, Writing - Review \& Editing.
-
-\section*{Data Availability}
-The codebase and evaluation framework will be released publicly upon acceptance (repository URL omitted for blind review). The yoga exercise videos used for profiling are available from the corresponding author upon reasonable request. The clinical knowledge base used for RAG grounding is included in the repository.
-
-\section*{Acknowledgment}
-The authors thank the anonymous reviewers for their constructive feedback.
 
 % === REFERENCES ===
 \balance

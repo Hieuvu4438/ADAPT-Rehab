@@ -64,3 +64,8 @@ models/**/*
 **/venv/
 **/.vscode/
 **/.idea/
+
+.claude/*
+/evaluation/output/
+
+``

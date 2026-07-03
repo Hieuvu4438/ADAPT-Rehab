@@ -1,7 +1,3 @@
-% === REFERENCES ===
-% ADAPT-Rehab Paper References for ATC 2026
-% All entries verified via DOI/cross-ref from references.txt
-
 @article{chen2020pose,
   title={Pose trainer: correcting exercise posture using pose estimation},
   author={Chen, Steven and Yang, Richard R},
@@ -63,6 +59,7 @@
   journal={arXiv preprint arXiv:2407.08634},
   year={2024}
 }
+
 
 @misc{contributors2020openmmlab,
   title={Openmmlab pose estimation toolbox and benchmark},
@@ -157,10 +154,11 @@
   publisher={PeerJ Inc.}
 }
 
+
 @ARTICLE{6786307,
   author={Whitehill, Jacob and Serpell, Zewelanji and Lin, Yi-Ching and Foster, Aysha and Movellan, Javier R.},
-  journal={IEEE Transactions on Affective Computing},
-  title={The Faces of Engagement: Automatic Recognition of Student Engagementfrom Facial Expressions},
+  journal={IEEE Transactions on Affective Computing}, 
+  title={The Faces of Engagement: Automatic Recognition of Student Engagementfrom Facial Expressions}, 
   year={2014},
   volume={5},
   number={1},
@@ -168,33 +166,36 @@
   keywords={Training;Labeling;Games;Software;Tablet computers;Observers;Reliability;Student engagement;engagement recognition;facial expression recognition;facial actions;intelligent tutoring systems;Student engagement;engagement recognition;facial expression recognition;facial actions;intelligent tutoring systems},
   doi={10.1109/TAFFC.2014.2316163}}
 
+
+  
 @article{dmello_multimodal_2010,
-  title = {Multimodal semi-automated affect detection from conversational cues, gross body language, and facial features},
-  volume = {20},
-  issn = {1573-1391},
-  url = {https://doi.org/10.1007/s11257-010-9074-4},
-  doi = {10.1007/s11257-010-9074-4},
-  abstract = {We developed and evaluated a multimodal affect detector that combines conversational cues, gross body language, and facial features.},
-  number = {2},
-  journal = {User Modeling and User-Adapted Interaction},
-  author = {D'Mello, Sidney K. and Graesser, Arthur},
-  month = {jun},
-  year = {2010},
-  pages = {147--187},
+	title = {Multimodal semi-automated affect detection from conversational cues, gross body language, and facial features},
+	volume = {20},
+	issn = {1573-1391},
+	url = {https://doi.org/10.1007/s11257-010-9074-4},
+	doi = {10.1007/s11257-010-9074-4},
+	abstract = {We developed and evaluated a multimodal affect detector that combines conversational cues, gross body language, and facial features. The multimodal affect detector uses feature-level fusion to combine the sensory channels and linear discriminant analyses to discriminate between naturally occurring experiences of boredom, engagement/flow, confusion, frustration, delight, and neutral. Training and validation data for the affect detector were collected in a study where 28 learners completed a 32- min. tutorial session with AutoTutor, an intelligent tutoring system with conversational dialogue. Classification results supported a channel × judgment type interaction, where the face was the most diagnostic channel for spontaneous affect judgments (i.e., at any time in the tutorial session), while conversational cues were superior for fixed judgments (i.e., every 20 s in the session). The analyses also indicated that the accuracy of the multichannel model (face, dialogue, and posture) was statistically higher than the best single-channel model for the fixed but not spontaneous affect expressions. However, multichannel models reduced the discrepancy (i.e., variance in the precision of the different emotions) of the discriminant models for both judgment types. The results also indicated that the combination of channels yielded superadditive effects for some affective states, but additive, redundant, and inhibitory effects for others. We explore the structure of the multimodal linear discriminant models and discuss the implications of some of our major findings.},
+	number = {2},
+	journal = {User Modeling and User-Adapted Interaction},
+	author = {D’Mello, Sidney K. and Graesser, Arthur},
+	month = jun,
+	year = {2010},
+	pages = {147--187},
 }
 
+
 @article{Scholp2021,
-  title = {Spectral arc length as a method to quantify pharyngeal high-resolution manometric curve smoothness},
+  title = {Spectral arc length as a method to quantify pharyngeal high‐resolution manometric curve smoothness},
   volume = {33},
   ISSN = {1365-2982},
   url = {http://dx.doi.org/10.1111/nmo.14122},
   DOI = {10.1111/nmo.14122},
   number = {10},
-  journal = {Neurogastroenterology \& Motility},
+  journal = {Neurogastroenterology &amp; Motility},
   publisher = {Wiley},
-  author = {Scholp, Austin J. and Hoffman, Matthew R. and Rosen, Sarah P. and Abdelhalim, Suzan M. and Jones, Corinne A. and Jiang, Jack J. and McCulloch, Timothy M.},
+  author = {Scholp,  Austin J. and Hoffman,  Matthew R. and Rosen,  Sarah P. and Abdelhalim,  Suzan M. and Jones,  Corinne A. and Jiang,  Jack J. and McCulloch,  Timothy M.},
   year = {2021},
-  month = {Apr}
+  month = Apr 
 }
 
 @article{Pirek2017,
@@ -205,14 +206,14 @@
   DOI = {10.1016/j.ins.2016.08.069},
   journal = {Information Sciences},
   publisher = {Elsevier BV},
-  author = {Pi\'{o}rek, Micha\l{} and Josi\'{n}ski, Henryk and Michalczuk, Agnieszka and \'{S}wito\'{n}ski, Adam and Szcz\k{e}sna, Agnieszka},
+  author = {Piórek,  Michał and Josiński,  Henryk and Michalczuk,  Agnieszka and Świtoński,  Adam and Szczȩsna,  Agnieszka},
   year = {2017},
-  month = {Apr},
-  pages = {263--280}
+  month = Apr,
+  pages = {263–280}
 }
 
 @article{Wu2002,
-  title = {ISB recommendation on definitions of joint coordinate system of various joints for the reporting of human joint motion---part I: ankle, hip, and spine},
+  title = {ISB recommendation on definitions of joint coordinate system of various joints for the reporting of human joint motion—part I: ankle,  hip,  and spine},
   volume = {35},
   ISSN = {0021-9290},
   url = {http://dx.doi.org/10.1016/S0021-9290(01)00222-6},
@@ -220,10 +221,10 @@
   number = {4},
   journal = {Journal of Biomechanics},
   publisher = {Elsevier BV},
-  author = {Wu, Ge and Siegler, Sorin and Allard, Paul and Kirtley, Chris and Leardini, Alberto and Rosenbaum, Dieter and Whittle, Mike and D'Lima, Darryl D and Cristofolini, Luca and Witte, Hartmut and Schmid, Oskar and Stokes, Ian},
+  author = {Wu,  Ge and Siegler,  Sorin and Allard,  Paul and Kirtley,  Chris and Leardini,  Alberto and Rosenbaum,  Dieter and Whittle,  Mike and D’Lima,  Darryl D and Cristofolini,  Luca and Witte,  Hartmut and Schmid,  Oskar and Stokes,  Ian},
   year = {2002},
-  month = {Apr},
-  pages = {543--548}
+  month = Apr,
+  pages = {543–548}
 }
 
 @article{Rohrer2002,
@@ -235,10 +236,10 @@
   number = {18},
   journal = {The Journal of Neuroscience},
   publisher = {Society for Neuroscience},
-  author = {Rohrer, Brandon and Fasoli, Susan and Krebs, Hermano Igo and Hughes, Richard and Volpe, Bruce and Frontera, Walter R. and Stein, Joel and Hogan, Neville},
+  author = {Rohrer,  Brandon and Fasoli,  Susan and Krebs,  Hermano Igo and Hughes,  Richard and Volpe,  Bruce and Frontera,  Walter R. and Stein,  Joel and Hogan,  Neville},
   year = {2002},
-  month = {Sept},
-  pages = {8297--8304}
+  month = Sept,
+  pages = {8297–8304}
 }
 
 @article{Koo2016,
@@ -250,10 +251,10 @@
   number = {2},
   journal = {Journal of Chiropractic Medicine},
   publisher = {National University of Health Sciences},
-  author = {Koo, Terry K. and Li, Mae Y.},
+  author = {Koo,  Terry K. and Li,  Mae Y.},
   year = {2016},
-  month = {June},
-  pages = {155--163}
+  month = June,
+  pages = {155–163}
 }
 
 @article{Yu2019,
@@ -265,9 +266,9 @@
   number = {13},
   journal = {Sensors},
   publisher = {MDPI AG},
-  author = {Yu, Xiaoqun and Xiong, Shuping},
+  author = {Yu,  Xiaoqun and Xiong,  Shuping},
   year = {2019},
-  month = {June},
+  month = June,
   pages = {2882}
 }
 
@@ -280,9 +281,9 @@
   number = {1},
   journal = {Data},
   publisher = {MDPI AG},
-  author = {Vakanski, Aleksandar and Jun, Hyung-pil and Paul, David and Baker, Russell},
+  author = {Vakanski,  Aleksandar and Jun,  Hyung-pil and Paul,  David and Baker,  Russell},
   year = {2018},
-  month = {Jan},
+  month = Jan,
   pages = {2}
 }
 
@@ -295,10 +296,10 @@
   number = {7},
   journal = {IEEE Transactions on Neural Systems and Rehabilitation Engineering},
   publisher = {Institute of Electrical and Electronics Engineers (IEEE)},
-  author = {Capecci, Marianna and Ceravolo, Maria Gabriella and Ferracuti, Francesco and Iarlori, Sabrina and Monteri\`{u}, Andrea and Romeo, Luca and Verdini, Federica},
+  author = {Capecci,  Marianna and Ceravolo,  Maria Gabriella and Ferracuti,  Francesco and Iarlori,  Sabrina and Monteriù,  Andrea and Romeo,  Luca and Verdini,  Federica},
   year = {2019},
-  month = {July},
-  pages = {1436--1448}
+  month = July,
+  pages = {1436–1448}
 }
 
 @article{AguilarOrtega2023,
@@ -310,17 +311,17 @@
   number = {21},
   journal = {Sensors},
   publisher = {MDPI AG},
-  author = {Aguilar-Ortega, Rafael and Berral-Soler, Rafael and Jim\'{e}nez-Velasco, Isabel and Romero-Ram\'{i}rez, Francisco J. and Garc\'{i}a-Mar\'{i}n, Manuel and Zafra-Palma, Jorge and Mu\~{n}oz-Salinas, Rafael and Medina-Carnicer, Rafael and Mar\'{i}n-Jim\'{e}nez, Manuel J.},
+  author = {Aguilar-Ortega,  Rafael and Berral-Soler,  Rafael and Jiménez-Velasco,  Isabel and Romero-Ramírez,  Francisco J. and García-Marín,  Manuel and Zafra-Palma,  Jorge and Muñoz-Salinas,  Rafael and Medina-Carnicer,  Rafael and Marín-Jiménez,  Manuel J.},
   year = {2023},
-  month = {Oct},
+  month = Oct,
   pages = {8862}
 }
 
-@article{lan2023vision,
+@article{https://doi.org/10.48550/arxiv.2308.13872,
   doi = {10.48550/ARXIV.2308.13872},
   url = {https://arxiv.org/abs/2308.13872},
-  author = {Lan, Gongjin and Wu, Yu and Hu, Fei and Hao, Qi},
-  keywords = {Computer Vision and Pattern Recognition (cs.CV), FOS: Computer and information sciences, FOS: Computer and information sciences},
+  author = {Lan,  Gongjin and Wu,  Yu and Hu,  Fei and Hao,  Qi},
+  keywords = {Computer Vision and Pattern Recognition (cs.CV),  FOS: Computer and information sciences,  FOS: Computer and information sciences},
   title = {Vision-Based Human Pose Estimation via Deep Learning: A Survey},
   publisher = {arXiv},
   year = {2023},

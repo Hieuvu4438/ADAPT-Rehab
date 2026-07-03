@@ -65,8 +65,10 @@ class SmoothnessAnalyzer:
             # -6: very impaired, 0: theoretically perfect
             # Balasubramanian et al. (2012) Fig. 4 shows clinical values to -6+
             sparc_score = max(0.0, min(100.0, (sparc + 6.0) / 6.0 * 100.0))
-            # LDLJ normalization: typical range is [-10, 0]
-            ldjl_score = max(0.0, min(100.0, (ldjl + 10.0) / 10.0 * 100.0))
+            # LDLJ normalization: empirical range [-40, 0] for rehabilitation trajectories
+            # Observed values are -32 to -34 (not the textbook [-10, 0] range)
+            # Using wider range maps -40 → 0, 0 → 100
+            ldjl_score = max(0.0, min(100.0, (ldjl + 40.0) / 40.0 * 100.0))
             score = self._sparc_weight * sparc_score + self._ldjl_weight * ldjl_score
 
             return SmoothnessResult(sparc=sparc, ldjl=ldjl, nvp=nvp, smoothness_score=score, is_valid=True)
