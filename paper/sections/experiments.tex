@@ -2,21 +2,18 @@
 \section{Experimental Setup and Evaluation}
 \label{sec:experiments}
 
-We position \system{} as a \emph{systems feasibility} study: the goal of this evaluation is to establish that real-time, whole-body, multimodal rehabilitation analysis is achievable on a single consumer GPU, and to characterize honestly which components are mature and which require further validation. We therefore report (1)~temporal stability of the pose pipeline and (2)~scoring validation on two public rehabilitation benchmarks. We explicitly do \emph{not} claim clinical-grade joint-angle accuracy: as detailed below, the absence of metric-scale ground truth on our exercise data means our pose metrics measure self-consistency, not error against motion-capture references.
+\system{} is positioned as a \emph{systems feasibility} study: the goal of this evaluation is to establish that real-time, whole-body, multimodal rehabilitation analysis is achievable on a single consumer GPU, and to characterize honestly which components are mature and which require further validation. Two sets of results are therefore reported, namely (1)~the temporal stability of the pose pipeline and (2)~the scoring validation on two public rehabilitation benchmarks. No claim of clinical-grade joint-angle accuracy is made: as detailed below, the absence of metric-scale ground truth on the exercise data means that the pose metrics measure self-consistency rather than error against motion-capture references.
 
 \subsection{Datasets}
-\begin{itemize}[itemsep=2pt, topsep=3pt, parsep=0pt]
-    \item \textbf{KIMORE}~\cite{Capecci2019}: 378 recordings across 5 rehabilitation exercises from 78 subjects (44 healthy, 34 with motor dysfunctions), captured with Kinect~v2 (25-joint skeleton). Each recording carries a clinical Total Score (cTS) from physical therapists. Used for clinical correlation and component ablation.
-    \item \textbf{UCO Physical Rehabilitation}~\cite{AguilarOrtega2023}: 393 recordings of 16 exercises from 27 subjects, captured with 5 synchronized RGB cameras and an OptiTrack motion-capture ground-truth system ($\pm$0.5\,mm accuracy). 1{,}918 per-repetition clinician scores (2--5 scale). Used for exercise discrimination and cross-view analysis.
-\end{itemize}
+The evaluation draws on three public rehabilitation datasets, each serving a distinct purpose. KIMORE~\cite{Capecci2019} comprises 378 recordings of 5 rehabilitation exercises performed by 78 subjects (44 healthy and 34 with motor dysfunctions), captured with Kinect~v2 (25-joint skeleton); each recording carries a clinical Total Score (cTS) assigned by physical therapists, and the dataset is used here for clinical correlation and component ablation. UCO Physical Rehabilitation~\cite{AguilarOrtega2023} contains 393 recordings of 16 exercises from 27 subjects, captured with 5 synchronized RGB cameras and an OptiTrack motion-capture ground-truth system ($\pm$0.5\,mm accuracy), accompanied by 1{,}918 per-repetition clinician scores on a 2--5 scale, and is used for exercise discrimination and cross-view analysis. UI-PRMD~\cite{Vakanski2018} provides 10 rehabilitation exercises performed by 10 healthy subjects, captured synchronously with a Kinect sensor and a Vicon optical motion-capture system; it is used to assess the temporal stability of the pose pipeline.
 
 \subsection{Pose Estimation Temporal Stability}
-We report \emph{temporal self-consistency}: the mean per-joint deviation of each frame's 3D keypoints from the per-video temporal mean, quantifying frame-to-frame jitter and tracking stability. On UI-PRMD, this self-consistency measure over 1{,}423 Kinect-skeleton samples yields $0.18 \pm 0.22$\,mm deviation, confirming the mapping framework runs end-to-end across skeleton formats with sub-millimetre jitter.
+The reported metric is \emph{temporal self-consistency}: the mean per-joint deviation of each frame's 3D keypoints from the per-video temporal mean, which quantifies frame-to-frame jitter and tracking stability. On UI-PRMD, this self-consistency measure over 1{,}423 Kinect-skeleton samples yields $0.18 \pm 0.22$\,mm deviation, confirming that the mapping framework runs end-to-end across skeleton formats with sub-millimetre jitter.
 
 \subsection{Scoring Validation on KIMORE}
-We evaluate the scoring framework on KIMORE using a fixed-reference protocol: the top-10 clinically-scored recordings per exercise serve as expert templates (mirroring clinical practice where a physiotherapist demonstration is the reference), and Procrustes-aligned position DTW computes the similarity of each recording to the nearest expert template.
+The scoring framework is evaluated on KIMORE using a fixed-reference protocol: the top-10 clinically-scored recordings per exercise serve as expert templates (mirroring clinical practice, where a physiotherapist demonstration serves as the reference), and Procrustes-aligned position DTW computes the similarity of each recording to the nearest expert template.
 
-Table~\ref{tab:kimore_corr} reports the Spearman correlation between our score and the clinical Total Score. All five exercises show significant positive correlation ($p < 0.05$), with an overall $\rho = 0.347$ ($p < 10^{-11}$).
+Table~\ref{tab:kimore_corr} reports the Spearman correlation between the proposed score and the clinical Total Score. All five exercises show a statistically significant positive correlation ($p < 0.05$), with an overall $\rho = 0.347$ ($p < 10^{-11}$).
 
 \begin{table}[htbp]
     \caption{KIMORE Clinical Score Correlation (Spearman $\rho$)}
@@ -32,13 +29,13 @@ Table~\ref{tab:kimore_corr} reports the Spearman correlation between our score a
         Squat & 0.235 & 4.1e-02 & 76 \\
         Trunk lateral tilt & 0.333 & 3.5e-03 & 75 \\
         \midrule
-        \textbf{Overall} & \textbf{0.347} & \textbf{3.7e-12} & \textbf{378} \\
+        Overall & 0.347 & 3.7e-12 & 378 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 
-\textbf{DTW variant comparison.} Procrustes-aligned position DTW ($\rho = 0.400$) substantially outperforms angle-based DTW ($\rho = 0.042$), a $9.5\times$ improvement. This confirms that body-level spatial alignment captures rehabilitation movement quality better than per-joint angle trajectories alone.
+DTW variant comparison. Procrustes-aligned position DTW ($\rho = 0.400$) substantially outperforms angle-based DTW ($\rho = 0.042$), a $9.5\times$ improvement. This indicates that body-level spatial alignment captures rehabilitation movement quality better than per-joint angle trajectories alone.
 
 \begin{table}[htbp]
     \caption{DTW Variant Comparison on KIMORE}
@@ -51,13 +48,13 @@ Table~\ref{tab:kimore_corr} reports the Spearman correlation between our score a
         Vanilla DTW + Euler angles & 0.042 \\
         DTW + Cosine on quaternions & 0.031 \\
         Rule-based thresholds & -0.039 \\
-        \textbf{Procrustes position DTW (ours)} & \textbf{0.400} \\
+        Procrustes position DTW (proposed) & 0.400 \\
         \bottomrule
     \end{tabular}
 \end{table}
 
 \subsection{Exercise Discrimination on UCO}
-We evaluate exercise-level discriminability on UCO using 6{,}000 balanced same-exercise vs.\ different-exercise pairs across 16 exercise classes. Table~\ref{tab:uco_discrim} reports a same-vs-different AUC of $0.974$ with a 48-point mean separation, confirming that the scoring framework reliably distinguishes correct exercise performance from incorrect cross-exercise comparisons.
+Exercise-level discriminability is evaluated on UCO using 6{,}000 balanced same-exercise vs.\ different-exercise pairs across 16 exercise classes. Table~\ref{tab:uco_discrim} reports a same-vs-different AUC of $0.974$ with a 48-point mean separation, indicating that the scoring framework reliably distinguishes correct exercise performance from incorrect cross-exercise comparisons.
 
 \begin{table}[htbp]
     \caption{UCO Exercise Discrimination (16 classes, 6000 pairs)}
@@ -75,7 +72,7 @@ We evaluate exercise-level discriminability on UCO using 6{,}000 balanced same-e
     \end{tabular}
 \end{table}
 
-\textbf{Cross-view analysis.} Silhouette-based motion signals exhibit an 87-point similarity drop across the five camera views, reinforcing the motivation for direct 3D pose estimation in rehabilitation settings where camera placement varies.
+Cross-view analysis. Silhouette-based motion signals exhibit an 87-point similarity drop across the five camera views, reinforcing the motivation for direct 3D pose estimation in rehabilitation settings where camera placement varies.
 
 \begin{figure}[htbp]
     \centering

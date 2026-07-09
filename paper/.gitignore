@@ -1,2 +1,13 @@
 # Ignore tectonic binary (55MB LaTeX compiler)
 tectonic
+
+# LaTeX auxiliary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.blg
+*.bbl
